@@ -18,6 +18,15 @@ struct SphericalCoordinates {
     phi: f32,
 }
 
+#[derive(Clone, Component, Default)]
+struct Cube {
+    is_selectable: bool,
+    is_selected: bool,
+}
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct HighlightGizmos;
+
 // enum LockCursor {
 //     Yes,
 //     No,
@@ -65,11 +74,19 @@ fn main() {
         .insert_resource(game)
         // .add_systems(Startup, scene.spawn())
         .add_systems(Startup, spawn_scene)
+        .add_systems(Startup, setup_highlight_gizmo_config)
+        .init_gizmo_group::<HighlightGizmos>()
         // .add_systems(Update, draw_cube)
         .add_systems(Update, scroll)
         .add_systems(Update, movement)
         .add_systems(Update, draw_cube_edges)
+        .add_systems(Update, fade_cubes_near_camera)
         .run();
+}
+
+fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<HighlightGizmos>();
+    config.depth_bias = -1.0;
 }
 
 // fn draw_cube(
@@ -110,11 +127,50 @@ fn main() {
 //     ));
 // }
 
-fn draw_cube_edges(mut gizmos: Gizmos, query: Query<(&Name, &Transform)>) {
-    for (name, transform) in &query {
-        if name.as_str() == "Cube" {
-            gizmos.cube(*transform, Color::WHITE);
+fn draw_cube_edges(mut gizmos: Gizmos, mut highlight_gizmos: Gizmos<HighlightGizmos>, query: Query<(&Cube, &Transform)>) {
+    for (cube, transform) in &query {
+        if cube.is_selected {
+            // gizmos.cube(*transform, Color::WHITE);
+            highlight_gizmos.cube(*transform, Color::WHITE);
+        } else {
+            if cube.is_selectable {
+                gizmos.cube(*transform, Color::srgb(0.0, 1.0, 0.0));
+            } else {
+                highlight_gizmos.cube(*transform, Color::srgb(1.0, 0.0, 0.0));
+            }
         }
+    }
+}
+
+fn fade_cubes_near_camera(
+    camera_query: Query<&Transform, With<Camera3d>>,
+    // mut cube_query: Query<(&Transform, &MeshMaterial3d<StandardMaterial>, &mut Cube)>,
+    mut cube_query: Query<(&Transform, &mut Cube)>,
+    // mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Ok(camera_transform) = camera_query.single() else {
+        return;
+    };
+
+    for (cube_transform, mut cube) in &mut cube_query {
+        let distance = camera_transform
+            .translation
+            .distance(cube_transform.translation);
+
+        // if let Some(mut material) = materials.get_mut(&material_handle.0) {
+        if distance <= 4.0 {
+            // material.alpha_mode = AlphaMode::Blend;
+            // material.base_color.set_alpha(0.1);
+            cube.is_selectable = false;
+            cube.is_selected = false;
+            // material.base_color = Color::srgb(1.0, 0.0, 0.0);
+        } else {
+            // material.alpha_mode = AlphaMode::Blend;
+            // material.base_color.set_alpha(1.0);
+            // material.base_color = Color::srgb(0.0, 1.0, 0.0);
+            cube.is_selectable = true;
+        }
+        // }
     }
 }
 
@@ -141,6 +197,7 @@ fn movement(
     }
 }
 
+// TODO: refactor scroll
 fn scroll(
     mut input: MessageReader<MouseWheel>,
     mut sphere_coords: ResMut<SphericalCoordinates>,
@@ -239,17 +296,25 @@ fn scene(x: usize, y: usize, z: usize) -> impl SceneList {
                     }
                 };
                 cubes.push(bsn!(
-                    #Cube
+                    Cube
                     Mesh3d(asset_value(Cuboid::new(1.0, 1.0, 1.0)))
-                    // MeshMaterial3d::<StandardMaterial>(asset_value(Color::srgb_u8(124, 144, 255)))
+                    // MeshMaterial3d::<StandardMaterial>(asset_value(Color::srgb(0.0, 1.0, 0.0)))
                     Transform::from_xyz(pos_x, pos_y, pos_z)
-                    on(move |click: On<Pointer<Click>>, mut game: ResMut<Game>| {
+                    on(move |hover: On<Pointer<Enter>>, mut query: Query<&mut Cube>| {
+                        if let Ok(mut cube) = query.get_mut(hover.entity) && cube.is_selectable {
+                            cube.is_selected = true;
+                        }
+                    })
+                    on(move |hover: On<Pointer<Leave>>, mut query: Query<&mut Cube>| {
+                        if let Ok(mut cube) = query.get_mut(hover.entity) && cube.is_selectable {
+                            cube.is_selected = false;
+                        }
+                    })
+                    on(move |click: On<Pointer<Click>>| {
                         match click.button {
                             PointerButton::Primary => {
-                                let mut block = game.get_block_mut(pos_x as usize, pos_y as usize, pos_z as usize).unwrap();
-
-
-                                info!("cube clicked");
+                                // let mut block = game.get_block_mut(pos_x as usize, pos_y as usize, pos_z as usize).unwrap();
+                                info!("cube clicked {}, {}, {}", pos_x, pos_y, pos_z);
                             },
                             PointerButton::Secondary => {},
                             PointerButton::Middle => {},
@@ -267,6 +332,12 @@ fn scene(x: usize, y: usize, z: usize) -> impl SceneList {
                     shadow_maps_enabled: true,
                 }
                 Transform::from_xyz(4.0, -8.0, -4.0)
+            ),
+            (
+                PointLight {
+                    shadow_maps_enabled: true,
+                }
+                Transform::from_xyz(-4.0, 8.0, 4.0)
             ),
             (
                 Camera3d

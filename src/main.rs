@@ -1,6 +1,6 @@
 use bevy::{
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
-    input::mouse::{MouseScrollUnit, MouseWheel},
+    input::mouse::MouseWheel,
     prelude::*,
 };
 
@@ -20,12 +20,29 @@ struct SphericalCoordinates {
 
 #[derive(Clone, Component, Default)]
 struct Cube {
+    x: f32,
+    y: f32,
+    z: f32,
     is_selectable: bool,
     is_selected: bool,
+    is_hovered: bool,
+    layer: usize,
 }
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
-struct HighlightGizmos;
+struct HoverGizmos;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct SelectableGizmos;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct NotSelectableGizmos;
+
+// #[derive(Clone)]
+// enum Visibility {
+//     Visible,
+//     Hidden,
+// }
 
 // enum LockCursor {
 //     Yes,
@@ -43,10 +60,12 @@ impl OverlayColor {
 }
 
 fn main() {
-    let game = Game::new(3, 3, 3, 4); // might need mut
+    let cube = 3;
+    let bombs = 3;
+    let game = Game::new(cube, cube, cube, bombs);
 
     let (_, theta, phi) = convert_cartesian_sphere(40.0, -10.0, 0.0);
-    let r = 10.0;
+    let r = cube as f32 * 2.0;
     App::new()
         .add_plugins((
             DefaultPlugins,
@@ -75,18 +94,24 @@ fn main() {
         // .add_systems(Startup, scene.spawn())
         .add_systems(Startup, spawn_scene)
         .add_systems(Startup, setup_highlight_gizmo_config)
-        .init_gizmo_group::<HighlightGizmos>()
+        .init_gizmo_group::<HoverGizmos>()
+        .init_gizmo_group::<SelectableGizmos>()
+        .init_gizmo_group::<NotSelectableGizmos>()
         // .add_systems(Update, draw_cube)
         .add_systems(Update, scroll)
         .add_systems(Update, movement)
         .add_systems(Update, draw_cube_edges)
-        .add_systems(Update, fade_cubes_near_camera)
+        // .add_systems(Update, fade_cubes_near_camera)
         .run();
 }
 
 fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
-    let (config, _) = config_store.config_mut::<HighlightGizmos>();
-    config.depth_bias = -1.0;
+    let (hover_config, _) = config_store.config_mut::<HoverGizmos>();
+    hover_config.depth_bias = -1.0;
+    let (selectable_config, _) = config_store.config_mut::<SelectableGizmos>();
+    selectable_config.depth_bias = -0.5;
+    let (not_selectable_config, _) = config_store.config_mut::<NotSelectableGizmos>();
+    not_selectable_config.depth_bias = 0.0;
 }
 
 // fn draw_cube(
@@ -127,52 +152,50 @@ fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
 //     ));
 // }
 
-fn draw_cube_edges(mut gizmos: Gizmos, mut highlight_gizmos: Gizmos<HighlightGizmos>, query: Query<(&Cube, &Transform)>) {
+fn draw_cube_edges(
+    // mut gizmos: Gizmos,
+    mut hover_gizmos: Gizmos<HoverGizmos>,
+    mut selectable_gizmos: Gizmos<SelectableGizmos>,
+    mut not_selectable_gizmos: Gizmos<NotSelectableGizmos>,
+    query: Query<(&Cube, &Transform)>,
+) {
     for (cube, transform) in &query {
+        if cube.is_hovered {
+            hover_gizmos.cube(*transform, Color::srgb(0.9, 0.9, 0.9));
+        }
         if cube.is_selected {
-            // gizmos.cube(*transform, Color::WHITE);
-            highlight_gizmos.cube(*transform, Color::WHITE);
+            selectable_gizmos.cube(*transform, Color::WHITE);
         } else {
-            if cube.is_selectable {
-                gizmos.cube(*transform, Color::srgb(0.0, 1.0, 0.0));
+            if !cube.is_selectable {
+                not_selectable_gizmos.cube(*transform, Color::srgb(1.0, 0.0, 0.0));
             } else {
-                highlight_gizmos.cube(*transform, Color::srgb(1.0, 0.0, 0.0));
+                selectable_gizmos.cube(*transform, Color::srgb(0.0, 1.0, 0.0));
             }
         }
     }
 }
 
-fn fade_cubes_near_camera(
-    camera_query: Query<&Transform, With<Camera3d>>,
-    // mut cube_query: Query<(&Transform, &MeshMaterial3d<StandardMaterial>, &mut Cube)>,
-    mut cube_query: Query<(&Transform, &mut Cube)>,
-    // mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let Ok(camera_transform) = camera_query.single() else {
-        return;
-    };
-
-    for (cube_transform, mut cube) in &mut cube_query {
-        let distance = camera_transform
-            .translation
-            .distance(cube_transform.translation);
-
-        // if let Some(mut material) = materials.get_mut(&material_handle.0) {
-        if distance <= 4.0 {
-            // material.alpha_mode = AlphaMode::Blend;
-            // material.base_color.set_alpha(0.1);
-            cube.is_selectable = false;
-            cube.is_selected = false;
-            // material.base_color = Color::srgb(1.0, 0.0, 0.0);
-        } else {
-            // material.alpha_mode = AlphaMode::Blend;
-            // material.base_color.set_alpha(1.0);
-            // material.base_color = Color::srgb(0.0, 1.0, 0.0);
-            cube.is_selectable = true;
-        }
-        // }
-    }
-}
+// fn fade_cubes_near_camera(
+//     camera_query: Query<&Transform, With<Camera3d>>,
+//     mut cube_query: Query<(&Transform, &mut Cube)>,
+// ) {
+//     let Ok(camera_transform) = camera_query.single() else {
+//         return;
+//     };
+//
+//     for (cube_transform, mut cube) in &mut cube_query {
+//         let distance = camera_transform
+//             .translation
+//             .distance(cube_transform.translation);
+//
+//         if distance <= 4.0 {
+//             cube.is_selectable = false;
+//             cube.is_selected = false;
+//         } else {
+//             cube.is_selectable = true;
+//         }
+//     }
+// }
 
 fn movement(
     button_input: Res<ButtonInput<MouseButton>>,
@@ -197,40 +220,48 @@ fn movement(
     }
 }
 
-// TODO: refactor scroll
 fn scroll(
     mut input: MessageReader<MouseWheel>,
     mut sphere_coords: ResMut<SphericalCoordinates>,
-    mut query: Query<&mut Transform, With<Camera3d>>,
+    mut game: ResMut<Game>,
+    mut cube_query: Query<(&mut Cube, &MeshMaterial3d<StandardMaterial>, &mut Pickable)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut camera_query: Query<&mut Transform, With<Camera3d>>,
 ) {
-    for message in input.read() {
-        let scroll = match message.unit {
-            MouseScrollUnit::Line => message.y * 1.0,
-            MouseScrollUnit::Pixel => message.y,
-        };
-        if scroll != 0.0 {
-            info!("Scrolled {} units", scroll);
-            for mut transform in &mut query {
-                let x = transform.translation.x;
-                let y = transform.translation.y;
-                let z = transform.translation.z;
-                info!("location: {}, {}, {}", x, y, z);
-                info!(
-                    "sphere location: {}, {}, {}",
-                    sphere_coords.r, sphere_coords.theta, sphere_coords.phi
-                );
-                if sphere_coords.r - scroll < ZOOM_LIMIT {
-                    sphere_coords.r = ZOOM_LIMIT;
-                } else {
-                    sphere_coords.r -= scroll;
-                }
-                let (x, y, z) = convert_sphere_cartesian(
-                    sphere_coords.r,
-                    sphere_coords.theta,
-                    sphere_coords.phi,
-                );
-                transform.translation = Vec3::new(x, y, z);
+    for wheel in input.read() {
+        if wheel.y > 0.0 && game.current_layer < game.max_layer {
+            game.current_layer += 1;
+            info!("{}", game.current_layer);
+        } else if wheel.y < 0.0 && game.current_layer > 0 {
+            game.current_layer -= 1;
+            info!("{}", game.current_layer);
+        }
+        for mut transform in &mut camera_query {
+            sphere_coords.r = (game.max_layer - game.current_layer + 5) as f32;
+            transform.translation = Vec3::from(convert_sphere_cartesian(
+                sphere_coords.r,
+                sphere_coords.theta,
+                sphere_coords.phi,
+            ));
+        }
+    }
+    for (mut cube, material, mut pickable) in &mut cube_query {
+        cube.is_selectable = cube.layer == game.current_layer;
+        if !cube.is_selectable {
+            cube.is_selected = false;
+            cube.is_hovered = false;
+        }
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            if cube.layer < game.current_layer {
+                material.base_color.set_alpha(0.1);
+            } else {
+                material.base_color.set_alpha(0.8);
             }
+        }
+        *pickable = if cube.layer < game.current_layer {
+            Pickable::IGNORE
+        } else {
+            Pickable::default()
         }
     }
 }
@@ -269,52 +300,51 @@ fn spawn_scene(mut commands: Commands, game: Res<Game>) {
     commands.spawn_scene_list(scene(game.x, game.y, game.z));
 }
 
+// FIX: DETECT THE INNER CUBE
 fn scene(x: usize, y: usize, z: usize) -> impl SceneList {
     let mut cubes = Vec::new();
     for depth in 0..z {
         for height in 0..y {
             for row in 0..x {
-                let pos_x = {
-                    if row <= x / 2 {
-                        -(row as f32)
-                    } else {
-                        row as f32 - 1.0
-                    }
-                };
-                let pos_y = {
-                    if height <= y / 2 {
-                        -(height as f32)
-                    } else {
-                        height as f32 - 1.0
-                    }
-                };
-                let pos_z = {
-                    if depth <= z / 2 {
-                        -(depth as f32)
-                    } else {
-                        depth as f32 - 1.0
-                    }
-                };
+                let pos_x = row as f32 - (x as f32 - 1.0) / 2.0;
+                let pos_y = height as f32 - (y as f32 - 1.0) / 2.0;
+                let pos_z = depth as f32 - (z as f32 - 1.0) / 2.0;
+                let layer = [
+                    row,
+                    x - 1 - row,
+                    height,
+                    y - 1 - height,
+                    depth,
+                    z - 1 - depth,
+                ]
+                .into_iter()
+                .min()
+                .unwrap();
+                let is_selectable = layer == 0;
                 cubes.push(bsn!(
-                    Cube
+                    Cube { x: pos_x, y: pos_y, z: pos_z, layer: layer, is_selectable, is_hovered: false, is_selected: false }
+                    Pickable
                     Mesh3d(asset_value(Cuboid::new(1.0, 1.0, 1.0)))
-                    // MeshMaterial3d::<StandardMaterial>(asset_value(Color::srgb(0.0, 1.0, 0.0)))
+                    MeshMaterial3d::<StandardMaterial>(asset_value(Color::srgba(0.0, 1.0, 0.0, 0.8)))
                     Transform::from_xyz(pos_x, pos_y, pos_z)
                     on(move |hover: On<Pointer<Enter>>, mut query: Query<&mut Cube>| {
                         if let Ok(mut cube) = query.get_mut(hover.entity) && cube.is_selectable {
-                            cube.is_selected = true;
+                            cube.is_hovered = true;
                         }
                     })
                     on(move |hover: On<Pointer<Leave>>, mut query: Query<&mut Cube>| {
                         if let Ok(mut cube) = query.get_mut(hover.entity) && cube.is_selectable {
-                            cube.is_selected = false;
+                            cube.is_hovered = false;
                         }
                     })
-                    on(move |click: On<Pointer<Click>>| {
+                    on(move |click: On<Pointer<Click>>, mut query: Query<&mut Cube>| {
                         match click.button {
                             PointerButton::Primary => {
                                 // let mut block = game.get_block_mut(pos_x as usize, pos_y as usize, pos_z as usize).unwrap();
-                                info!("cube clicked {}, {}, {}", pos_x, pos_y, pos_z);
+                                if let Ok(mut cube) = query.get_mut(click.entity) && cube.is_selectable {
+                                    // info!("cube clicked {}, {}, {}", pos_x, pos_y, pos_z);
+                                    cube.is_selected = true;
+                                }
                             },
                             PointerButton::Secondary => {},
                             PointerButton::Middle => {},

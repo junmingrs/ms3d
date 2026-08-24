@@ -4,19 +4,12 @@ use bevy::{
     prelude::*,
 };
 
-use crate::game::Game;
+use crate::{camera::Camera, game::Game};
 
 mod camera;
 mod cube;
 mod game;
 mod moving;
-
-#[derive(Resource)]
-struct SphericalCoordinates {
-    r: f32,
-    theta: f32,
-    phi: f32,
-}
 
 #[derive(Clone, Component, Default)]
 struct Cube {
@@ -49,9 +42,6 @@ struct NotSelectableGizmos;
 //     No,
 // }
 
-const SENSITIVITY: f32 = 0.5;
-const ZOOM_LIMIT: f32 = 2.0;
-
 struct OverlayColor;
 
 impl OverlayColor {
@@ -63,9 +53,8 @@ fn main() {
     let cube = 3;
     let bombs = 3;
     let game = Game::new(cube, cube, cube, bombs);
+    let camera = Camera::new(&cube, game.max_layer);
 
-    let (_, theta, phi) = convert_cartesian_sphere(40.0, -10.0, 0.0);
-    let r = cube as f32 * 2.0;
     App::new()
         .add_plugins((
             DefaultPlugins,
@@ -82,27 +71,39 @@ fn main() {
                     refresh_interval: core::time::Duration::from_millis(100),
                     enabled: true,
                     frame_time_graph_config: FrameTimeGraphConfig {
-                        enabled: true,
+                        enabled: false,
                         min_fps: 30.0,
                         target_fps: 144.0,
                     },
                 },
             },
         ))
-        .insert_resource(SphericalCoordinates { r, theta, phi })
         .insert_resource(game)
+        .insert_resource(camera)
         // .add_systems(Startup, scene.spawn())
         .add_systems(Startup, spawn_scene)
         .add_systems(Startup, setup_highlight_gizmo_config)
         .init_gizmo_group::<HoverGizmos>()
         .init_gizmo_group::<SelectableGizmos>()
         .init_gizmo_group::<NotSelectableGizmos>()
-        // .add_systems(Update, draw_cube)
         .add_systems(Update, scroll)
         .add_systems(Update, movement)
+        .add_systems(Update, update_camera)
         .add_systems(Update, draw_cube_edges)
         // .add_systems(Update, fade_cubes_near_camera)
         .run();
+}
+
+fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, With<Camera3d>>) {
+    for mut transform in &mut query {
+        camera.update_world_coords();
+        transform.translation = Vec3::new(
+            camera.world_coords.x,
+            camera.world_coords.y,
+            camera.world_coords.z,
+        );
+        transform.look_at(Vec3::ZERO, Vec3::Y);
+    }
 }
 
 fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
@@ -113,44 +114,6 @@ fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
     let (not_selectable_config, _) = config_store.config_mut::<NotSelectableGizmos>();
     not_selectable_config.depth_bias = 0.0;
 }
-
-// fn draw_cube(
-//     mut commands: Commands,
-//     mut meshes: ResMut<Assets<Mesh>>,
-//     mut materials: ResMut<Assets<StandardMaterial>>,
-// ) {
-//     let red = [1.0, 0.0, 0.0, 1.0];
-//     let green = [0.0, 1.0, 0.0, 1.0];
-//     let blue = [0.0, 0.0, 1.0, 1.0];
-//     let yellow = [1.0, 1.0, 0.0, 1.0];
-//     let orange = [1.0, 0.5, 0.0, 1.0];
-//     let purple = [0.5, 0.0, 0.5, 1.0];
-//
-//     // 2. Generate the vertex array (4 vertices per face * 6 faces = 24 entries)
-//     let vertex_colors = vec![
-//         // Right face (4 vertices)
-//         red, red, red, red, // Left face
-//         green, green, green, green, // Top face
-//         blue, blue, blue, blue, // Bottom face
-//         yellow, yellow, yellow, yellow, // Forward face
-//         orange, orange, orange, orange, // Back face
-//         purple, purple, purple, purple,
-//     ];
-//
-//     // 3. Create the mesh and insert the color attribute
-//     let mut colorful_mesh = Mesh::from(Cuboid::default());
-//     colorful_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colors);
-//
-//     // 4. Spawn the cube with a white base material so colors aren't tinted
-//     commands.spawn((
-//         Mesh3d(meshes.add(colorful_mesh)),
-//         MeshMaterial3d(materials.add(StandardMaterial {
-//             base_color: Color::from(LinearRgba::WHITE),
-//             ..default()
-//         })),
-//         Transform::from_xyz(0.0, 0.0, 0.0),
-//     ));
-// }
 
 fn draw_cube_edges(
     // mut gizmos: Gizmos,
@@ -199,53 +162,71 @@ fn draw_cube_edges(
 
 fn movement(
     button_input: Res<ButtonInput<MouseButton>>,
-    mut sphere_coords: ResMut<SphericalCoordinates>,
+    // mut sphere_coords: ResMut<SphericalCoordinates>,
     mut move_input: MessageReader<CursorMoved>,
-    mut query: Query<&mut Transform, With<Camera3d>>,
+    // mut query: Query<(&mut Transform, &mut Camera)>,
+    mut camera: ResMut<Camera>,
 ) {
-    for mut transform in &mut query {
-        if button_input.pressed(MouseButton::Right) {
-            for message in move_input.read() {
-                if let Some(delta) = message.delta {
-                    sphere_coords.theta += delta.x * SENSITIVITY;
-                    sphere_coords.phi =
-                        (sphere_coords.phi - delta.y * SENSITIVITY).clamp(0.01, 179.99);
-                }
+    if button_input.pressed(MouseButton::Right) {
+        for message in move_input.read() {
+            if let Some(delta) = message.delta {
+                camera.move_camera(delta);
             }
         }
-        let (x, y, z) =
-            convert_sphere_cartesian(sphere_coords.r, sphere_coords.theta, sphere_coords.phi);
-        transform.translation = Vec3::new(x, y, z);
-        transform.look_at(Vec3::ZERO, Vec3::Y);
     }
+    // for (mut transform, mut camera) in &mut query {
+    //     if button_input.pressed(MouseButton::Right) {
+    //         for message in move_input.read() {
+    //             if let Some(delta) = message.delta {
+    //                 camera.move_camera(delta);
+    //                 //     sphere_coords.theta += delta.x * SENSITIVITY;
+    //                 //     sphere_coords.phi =
+    //                 //         (sphere_coords.phi - delta.y * SENSITIVITY).clamp(0.01, 179.99);
+    //             }
+    //         }
+    //     }
+    // let (x, y, z) =
+    //     convert_sphere_cartesian(sphere_coords.r, sphere_coords.theta, sphere_coords.phi);
+    // transform.translation = Vec3::new(x, y, z);
+    // transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
 fn scroll(
+    time: Res<Time>,
     mut input: MessageReader<MouseWheel>,
-    mut sphere_coords: ResMut<SphericalCoordinates>,
+    // mut sphere_coords: ResMut<SphericalCoordinates>,
     mut game: ResMut<Game>,
     mut cube_query: Query<(&mut Cube, &MeshMaterial3d<StandardMaterial>, &mut Pickable)>,
+    // mut cube_query: Query<(&mut Cube, &mut Pickable)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut camera_query: Query<&mut Transform, With<Camera3d>>,
+    // mut camera_query: Query<(&mut Transform, &mut Camera)>,
+    mut camera: ResMut<Camera>,
+    // mut query: Query<&mut Transform, With<Camera3d>>,
 ) {
+    // if let Ok(mut transform) = query.single_mut() {
     for wheel in input.read() {
         if wheel.y > 0.0 && game.current_layer < game.max_layer {
             game.current_layer += 1;
-            info!("{}", game.current_layer);
+            // info!("{}", game.current_layer);
         } else if wheel.y < 0.0 && game.current_layer > 0 {
             game.current_layer -= 1;
-            info!("{}", game.current_layer);
+            // info!("{}", game.current_layer);
         }
-        for mut transform in &mut camera_query {
-            sphere_coords.r = (game.max_layer - game.current_layer + 5) as f32;
-            transform.translation = Vec3::from(convert_sphere_cartesian(
-                sphere_coords.r,
-                sphere_coords.theta,
-                sphere_coords.phi,
-            ));
-        }
+        camera.current_layer = game.current_layer;
+        let scroll = (game.max_layer - game.current_layer + 5) as f32;
+        camera.scroll_camera(scroll);
+        // camera.zoom_camera(delta_scroll);
+        // camera.scroll_camera(scroll);
+        // let (x, y, z) = Camera::convert_sphere_cartesian(
+        //     &scroll,
+        //     &camera.sphere_coords.theta,
+        //     &camera.sphere_coords.phi,
+        // );
+        // transform.translation = transform.translation.lerp(Vec3::new(x, y, z), t);
+        // }
     }
     for (mut cube, material, mut pickable) in &mut cube_query {
+        // for (mut cube, mut pickable) in &mut cube_query {
         cube.is_selectable = cube.layer == game.current_layer;
         if !cube.is_selectable {
             cube.is_selected = false;
@@ -266,26 +247,6 @@ fn scroll(
     }
 }
 
-fn convert_sphere_cartesian(r: f32, theta: f32, phi: f32) -> (f32, f32, f32) {
-    let r = r.to_radians();
-    let theta = theta.to_radians();
-    let phi = phi.to_radians();
-    let x = r * phi.sin() * theta.cos();
-    let y = r * phi.cos();
-    let z = r * theta.sin() * phi.sin();
-    (x.to_degrees(), y.to_degrees(), z.to_degrees())
-}
-
-fn convert_cartesian_sphere(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
-    let x = x.to_radians();
-    let y = y.to_radians();
-    let z = z.to_radians();
-    let r: f32 = (x * x + y * y + z * z).sqrt();
-    let theta: f32 = (z / r).acos();
-    let phi: f32 = y.atan2(x);
-    (r, theta, phi)
-}
-
 // fn normalize(x: f32, y: f32, z: f32) -> [f32; 3] {
 //     let l = [x, y, z];
 //     let mut res = [0.0; 3];
@@ -300,7 +261,6 @@ fn spawn_scene(mut commands: Commands, game: Res<Game>) {
     commands.spawn_scene_list(scene(game.x, game.y, game.z));
 }
 
-// FIX: DETECT THE INNER CUBE
 fn scene(x: usize, y: usize, z: usize) -> impl SceneList {
     let mut cubes = Vec::new();
     for depth in 0..z {
@@ -370,6 +330,7 @@ fn scene(x: usize, y: usize, z: usize) -> impl SceneList {
                 Transform::from_xyz(-4.0, 8.0, 4.0)
             ),
             (
+                Camera
                 Camera3d
                 template_value(Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y))
             ),

@@ -1,13 +1,4 @@
-use std::time::Duration;
-
-use bevy::{
-    camera::Camera3d,
-    ecs::{component::Component, resource::Resource},
-    math::{Vec2, Vec3, VectorSpace},
-    platform::thread,
-    transform::components::Transform,
-    utils::default,
-};
+use bevy::{camera::Camera3d, ecs::resource::Resource, math::Vec2, utils::default};
 
 const SENSITIVITY: f32 = 0.5;
 const ZOOM_LIMIT: f32 = 2.0;
@@ -74,25 +65,8 @@ impl Camera {
             (self.sphere_coords.phi - delta.y * SENSITIVITY).clamp(0.01, 179.99);
     }
 
-    // pub fn zoom_camera(&mut self, scroll: f32) {
-    //     self.zoom_animation(scroll, 500);
-    // }
-
-    // FIX: lerp but no "animation" yet
     pub fn scroll_camera(&mut self, scroll: f32) {
-        // self.sphere_coords.r = scroll;
-        let (x, y, z) =
-            Self::convert_sphere_cartesian(&scroll, &self.sphere_coords.theta, &self.sphere_coords.phi);
-        let a = Vec3::new(
-            self.world_coords.x,
-            self.world_coords.y,
-            self.world_coords.z,
-        )
-        .lerp(Vec3::new(x, y, z), 100.0);
-        let (r, theta, phi) = Self::convert_cartesian_sphere(&a.x, &a.y, &a.z);
-        self.sphere_coords.r = r; 
-        self.sphere_coords.theta = theta; 
-        self.sphere_coords.phi = phi; 
+        self.sphere_coords.r = scroll;
     }
 
     pub fn update_world_coords(&mut self) {
@@ -125,19 +99,4 @@ impl Camera {
         let phi: f32 = y.atan2(x);
         (r, theta, phi)
     }
-    // NOTE: duration is in milliseconds
-    // pub fn zoom_animation(
-    //     &mut self,
-    //     scroll: f32,
-    //     duration: usize,
-    // ) {
-    //     let step = scroll / duration as f32;
-    //     println!("{}", step);
-    //     let mut millis: usize = 0;
-    //     while millis < duration {
-    //         self.scroll_camera(step);
-    //         thread::sleep(Duration::from_millis(10));
-    //         millis += 1;
-    //     }
-    // }
 }

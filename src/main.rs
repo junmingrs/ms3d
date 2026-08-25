@@ -31,24 +31,6 @@ struct SelectableGizmos;
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct NotSelectableGizmos;
 
-// #[derive(Clone)]
-// enum Visibility {
-//     Visible,
-//     Hidden,
-// }
-
-// enum LockCursor {
-//     Yes,
-//     No,
-// }
-
-struct OverlayColor;
-
-impl OverlayColor {
-    // const RED: Color = Color::srgb(1.0, 0.0, 0.0);
-    const GREEN: Color = Color::srgb(0.0, 1.0, 0.0);
-}
-
 fn main() {
     let cube = 3;
     let bombs = 3;
@@ -67,7 +49,7 @@ fn main() {
                         font_smoothing: FontSmoothing::default(),
                         ..default()
                     },
-                    text_color: OverlayColor::GREEN,
+                    text_color: Color::srgb(0.0, 1.0, 0.0),
                     refresh_interval: core::time::Duration::from_millis(100),
                     enabled: true,
                     frame_time_graph_config: FrameTimeGraphConfig {
@@ -97,10 +79,13 @@ fn main() {
 fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, With<Camera3d>>) {
     for mut transform in &mut query {
         camera.update_world_coords();
-        transform.translation = Vec3::new(
-            camera.world_coords.x,
-            camera.world_coords.y,
-            camera.world_coords.z,
+        transform.translation = transform.translation.lerp(
+            Vec3::new(
+                camera.world_coords.x,
+                camera.world_coords.y,
+                camera.world_coords.z,
+            ),
+            0.1,
         );
         transform.look_at(Vec3::ZERO, Vec3::Y);
     }
@@ -162,9 +147,7 @@ fn draw_cube_edges(
 
 fn movement(
     button_input: Res<ButtonInput<MouseButton>>,
-    // mut sphere_coords: ResMut<SphericalCoordinates>,
     mut move_input: MessageReader<CursorMoved>,
-    // mut query: Query<(&mut Transform, &mut Camera)>,
     mut camera: ResMut<Camera>,
 ) {
     if button_input.pressed(MouseButton::Right) {
@@ -174,59 +157,26 @@ fn movement(
             }
         }
     }
-    // for (mut transform, mut camera) in &mut query {
-    //     if button_input.pressed(MouseButton::Right) {
-    //         for message in move_input.read() {
-    //             if let Some(delta) = message.delta {
-    //                 camera.move_camera(delta);
-    //                 //     sphere_coords.theta += delta.x * SENSITIVITY;
-    //                 //     sphere_coords.phi =
-    //                 //         (sphere_coords.phi - delta.y * SENSITIVITY).clamp(0.01, 179.99);
-    //             }
-    //         }
-    //     }
-    // let (x, y, z) =
-    //     convert_sphere_cartesian(sphere_coords.r, sphere_coords.theta, sphere_coords.phi);
-    // transform.translation = Vec3::new(x, y, z);
-    // transform.look_at(Vec3::ZERO, Vec3::Y);
 }
 
 fn scroll(
-    time: Res<Time>,
     mut input: MessageReader<MouseWheel>,
-    // mut sphere_coords: ResMut<SphericalCoordinates>,
     mut game: ResMut<Game>,
     mut cube_query: Query<(&mut Cube, &MeshMaterial3d<StandardMaterial>, &mut Pickable)>,
-    // mut cube_query: Query<(&mut Cube, &mut Pickable)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    // mut camera_query: Query<(&mut Transform, &mut Camera)>,
     mut camera: ResMut<Camera>,
-    // mut query: Query<&mut Transform, With<Camera3d>>,
 ) {
-    // if let Ok(mut transform) = query.single_mut() {
     for wheel in input.read() {
         if wheel.y > 0.0 && game.current_layer < game.max_layer {
             game.current_layer += 1;
-            // info!("{}", game.current_layer);
         } else if wheel.y < 0.0 && game.current_layer > 0 {
             game.current_layer -= 1;
-            // info!("{}", game.current_layer);
         }
         camera.current_layer = game.current_layer;
         let scroll = (game.max_layer - game.current_layer + 5) as f32;
         camera.scroll_camera(scroll);
-        // camera.zoom_camera(delta_scroll);
-        // camera.scroll_camera(scroll);
-        // let (x, y, z) = Camera::convert_sphere_cartesian(
-        //     &scroll,
-        //     &camera.sphere_coords.theta,
-        //     &camera.sphere_coords.phi,
-        // );
-        // transform.translation = transform.translation.lerp(Vec3::new(x, y, z), t);
-        // }
     }
     for (mut cube, material, mut pickable) in &mut cube_query {
-        // for (mut cube, mut pickable) in &mut cube_query {
         cube.is_selectable = cube.layer == game.current_layer;
         if !cube.is_selectable {
             cube.is_selected = false;
@@ -246,16 +196,6 @@ fn scroll(
         }
     }
 }
-
-// fn normalize(x: f32, y: f32, z: f32) -> [f32; 3] {
-//     let l = [x, y, z];
-//     let mut res = [0.0; 3];
-//     for r in res.iter_mut() {
-//         let pre: f32 = (l[0] * l[0]) + (l[1] * l[1]) + (l[2] * l[2]);
-//         *r = 1.0 / pre.sqrt();
-//     }
-//     res
-// }
 
 fn spawn_scene(mut commands: Commands, game: Res<Game>) {
     commands.spawn_scene_list(scene(game.x, game.y, game.z));

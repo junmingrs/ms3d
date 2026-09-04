@@ -1,4 +1,4 @@
-use bevy::{camera::Camera3d, ecs::resource::Resource, math::Vec2, utils::default};
+use bevy::{ecs::resource::Resource, math::Vec2, utils::default};
 
 const SENSITIVITY: f32 = 0.5;
 const ZOOM_LIMIT: f32 = 2.0;
@@ -23,7 +23,6 @@ pub struct Camera {
     pub world_coords: WorldCoordinates,
     pub current_layer: usize,
     pub max_layer: usize,
-    camera3d: Camera3d,
 }
 
 impl Default for Camera {
@@ -33,7 +32,6 @@ impl Default for Camera {
             world_coords: WorldCoordinates::default(),
             current_layer: 0,
             max_layer: 1,
-            camera3d: Camera3d::default(),
         }
     }
 }

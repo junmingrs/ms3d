@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bevy::{ecs::resource::Resource, log::info};
+use bevy::ecs::resource::Resource;
 
 #[derive(Clone, Copy)]
 pub struct Block {
@@ -90,14 +90,16 @@ impl Game {
 
     pub fn generate_bombs(&mut self, x: usize, y: usize, z: usize) {
         let mut bomb_positions: Vec<(usize, usize, usize)> = Vec::new();
+        let mut remaining = self.x * self.y * self.z - 1;
 
         for depth in self.map.iter() {
             for height in depth {
                 for row in height {
                     if self.bombs > 0 && (row.x, row.y, row.z) != (x, y, z) {
                         let is_bomb = rand::random_bool(
-                            self.bombs as f64 / (self.x * self.y * self.z - 1) as f64,
+                            self.bombs as f64 / remaining as f64,
                         );
+                        remaining -= 1;
                         if is_bomb {
                             bomb_positions.push((row.x, row.y, row.z));
                             self.bombs -= 1;
@@ -150,7 +152,8 @@ impl Game {
                     }
                     for (dx, dy, dz) in Self::OFFSETS {
                         if let Some(neighbour) = self.get_offset_position(x, y, z, dx, dy, dz)
-                            && let Some(block) = self.get_block(neighbour.0, neighbour.1, neighbour.2)
+                            && let Some(block) =
+                                self.get_block(neighbour.0, neighbour.1, neighbour.2)
                             && !block.is_revealed
                             && !block.is_bomb
                         {

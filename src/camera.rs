@@ -1,7 +1,6 @@
-use bevy::{ecs::resource::Resource, math::Vec2, utils::default};
+use bevy::{ecs::resource::Resource, math::Vec2};
 
 const SENSITIVITY: f32 = 0.5;
-const ZOOM_LIMIT: f32 = 2.0;
 
 #[derive(Default, Clone)]
 pub struct WorldCoordinates {
@@ -22,38 +21,33 @@ pub struct Camera {
     pub sphere_coords: SphericalCoordinates,
     pub world_coords: WorldCoordinates,
     pub current_layer: usize,
-    pub max_layer: usize,
+    // pub max_layer: usize,
 }
 
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            sphere_coords: SphericalCoordinates::default(),
-            world_coords: WorldCoordinates::default(),
-            current_layer: 0,
-            max_layer: 1,
-        }
-    }
-}
+// impl Default for Camera {
+//     fn default() -> Self {
+//         Self {
+//             sphere_coords: SphericalCoordinates::default(),
+//             world_coords: WorldCoordinates::default(),
+//             current_layer: 0,
+//             // max_layer: 1,
+//         }
+//     }
+// }
 
 impl Camera {
-    pub fn new(cube: &usize, max_layer: usize) -> Self {
-        // TODO: not hardcode these values
-        let world_coords = WorldCoordinates {
-            x: 40.0,
-            y: -10.0,
-            z: 0.0,
-        };
-        let (_, theta, phi) =
-            Self::convert_cartesian_sphere(&world_coords.x, &world_coords.y, &world_coords.z);
+    pub fn new(cube: &usize) -> Self {
+        let d = *cube as f32;
+        let (_, theta, phi) = Self::convert_cartesian_sphere(&d, &d, &d);
         let r = *cube as f32 * 2.0;
         let sphere_coords = SphericalCoordinates { r, theta, phi };
+        let (x, y, z) = Self::convert_sphere_cartesian(&r, &theta, &phi);
+        let world_coords = WorldCoordinates { x, y, z };
         Self {
             sphere_coords,
             world_coords,
             current_layer: 0,
-            max_layer,
-            ..default()
+            // max_layer,
         }
     }
 

@@ -1,7 +1,6 @@
 use bevy::{
     asset::RenderAssetUsages,
     camera::RenderTarget,
-    color::palettes::css::{GRAY, WHITE},
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
     input::mouse::MouseWheel,
     prelude::*,
@@ -17,9 +16,6 @@ mod moving;
 
 #[derive(Clone, Component, Default)]
 struct Cube {
-    x: f32,
-    y: f32,
-    z: f32,
     row: usize,
     height: usize,
     depth: usize,
@@ -49,7 +45,7 @@ fn main() {
     let cube = 3;
     let bombs = 3;
     let game = Game::new(cube, cube, cube, bombs);
-    let camera = Camera::new(&cube, game.max_layer);
+    let camera = Camera::new(&cube);
 
     App::new()
         .add_plugins((
@@ -76,18 +72,16 @@ fn main() {
         ))
         .insert_resource(game)
         .insert_resource(camera)
-        // .add_systems(Startup, scene.spawn())
         .add_systems(Startup, spawn_scene)
-        .add_systems(Startup, setup_highlight_gizmo_config)
-        .init_gizmo_group::<HoverGizmos>()
-        .init_gizmo_group::<SelectableGizmos>()
-        .init_gizmo_group::<NotSelectableGizmos>()
+        // .add_systems(Startup, setup_highlight_gizmo_config)
+        // .init_gizmo_group::<HoverGizmos>()
+        // .init_gizmo_group::<SelectableGizmos>()
+        // .init_gizmo_group::<NotSelectableGizmos>()
         .add_systems(Update, scroll)
         .add_systems(Update, movement)
         .add_systems(Update, update_camera)
         .add_systems(Update, update_text)
         // .add_systems(Update, draw_cube_edges)
-        // .add_systems(Update, fade_cubes_near_camera)
         .run();
 }
 
@@ -100,6 +94,7 @@ fn update_text(
         if let Ok(cube) = cube_query.get(*cube_entity)
             && let Some(block) = game.get_block(cube.row, cube.height, cube.depth)
             && block.is_revealed
+            && !block.is_bomb
         {
             text.0 = format!("{}", block.nearby_bombs);
         }
@@ -121,15 +116,15 @@ fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, Wi
     }
 }
 
-fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
-    let (hover_config, _) = config_store.config_mut::<HoverGizmos>();
-    hover_config.depth_bias = -1.0;
-    let (selectable_config, _) = config_store.config_mut::<SelectableGizmos>();
-    selectable_config.depth_bias = -0.5;
-    let (not_selectable_config, _) = config_store.config_mut::<NotSelectableGizmos>();
-    not_selectable_config.depth_bias = -0.1;
-}
-
+// fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
+//     let (hover_config, _) = config_store.config_mut::<HoverGizmos>();
+//     hover_config.depth_bias = -1.0;
+//     let (selectable_config, _) = config_store.config_mut::<SelectableGizmos>();
+//     selectable_config.depth_bias = -0.5;
+//     let (not_selectable_config, _) = config_store.config_mut::<NotSelectableGizmos>();
+//     not_selectable_config.depth_bias = -0.1;
+// }
+//
 // fn draw_cube_edges(
 //     // mut gizmos: Gizmos,
 //     mut hover_gizmos: Gizmos<HoverGizmos>,
@@ -151,28 +146,6 @@ fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
 //             } else {
 //                 selectable_gizmos.cube(*transform, Color::srgb(0.0, 1.0, 0.0));
 //             }
-//         }
-//     }
-// }
-
-// fn fade_cubes_near_camera(
-//     camera_query: Query<&Transform, With<Camera3d>>,
-//     mut cube_query: Query<(&Transform, &mut Cube)>,
-// ) {
-//     let Ok(camera_transform) = camera_query.single() else {
-//         return;
-//     };
-//
-//     for (cube_transform, mut cube) in &mut cube_query {
-//         let distance = camera_transform
-//             .translation
-//             .distance(cube_transform.translation);
-//
-//         if distance <= 4.0 {
-//             cube.is_selectable = false;
-//             cube.is_selected = false;
-//         } else {
-//             cube.is_selectable = true;
 //         }
 //     }
 // }
@@ -270,10 +243,9 @@ fn spawn_scene(
                 .min()
                 .unwrap();
                 let is_selectable = layer == 0;
-                // TODO: need get ui text on 3d cube
                 let size = render_resource::Extent3d {
-                    width: 512,
-                    height: 512,
+                    width: 256,
+                    height: 256,
                     ..Default::default()
                 };
                 let mut image = Image::new_fill(
@@ -298,6 +270,12 @@ fn spawn_scene(
                     ))
                     .id();
                 let cube_entity = commands.spawn_empty().id();
+                let is_white = (row + height + depth) % 2 == 0;
+                let bg_colour = if is_white {
+                    Color::srgb(170.0 / 256.0, 215.0 / 256.0, 81.0 / 256.0)
+                } else {
+                    Color::srgb(162.0 / 256.0, 209.0 / 256.0, 73.0 / 256.0)
+                };
                 commands
                     .spawn((
                         SurfaceBackground(cube_entity),
@@ -309,22 +287,17 @@ fn spawn_scene(
                             align_items: AlignItems::Center,
                             ..Default::default()
                         },
-                        BackgroundColor(WHITE.into()),
+                        BackgroundColor(bg_colour),
                         UiTargetCamera(texture_camera),
                     ))
                     .with_children(|parent| {
-                        parent.spawn((
-                            // SurfaceBackground(cube_entity),
-                            Node {
-                                position_type: PositionType::Absolute,
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                align_items: AlignItems::Center,
-                                // border_radius: BorderRadius::all(px(10.)),
-                                ..default()
-                            },
-                            // BackgroundColor(WHITE.into()),
-                        ));
+                        parent.spawn((Node {
+                            position_type: PositionType::Absolute,
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },));
                     })
                     .with_children(|parent| {
                         parent.spawn((
@@ -341,15 +314,13 @@ fn spawn_scene(
                     base_color_texture: Some(image_handle),
                     reflectance: 0.0,
                     alpha_mode: AlphaMode::Blend,
+                    unlit: true,
                     ..Default::default()
                 });
                 commands
                     .entity(cube_entity)
                     .insert((
                         Cube {
-                            x: pos_x,
-                            y: pos_y,
-                            z: pos_z,
                             row,
                             height,
                             depth,
@@ -384,11 +355,11 @@ fn spawn_scene(
                     )
                     .observe(
                         move |click: On<Pointer<Click>>,
-                              mut query: Query<&mut Cube>,
+                              query: Query<&mut Cube>,
                               mut game: ResMut<Game>| {
                             match click.button {
                                 PointerButton::Primary => {
-                                    if let Ok(mut cube) = query.get_mut(click.entity)
+                                    if let Ok(cube) = query.get(click.entity)
                                         && cube.is_selectable
                                     {
                                         // info!("cube clicked {}, {}, {}", pos_x, pos_y, pos_z);
@@ -412,7 +383,7 @@ fn spawn_scene(
         Transform::from_xyz(0.0, 0.0, 0.0),
     ));
     commands.spawn((
-        Camera::default(),
+        Camera::new(&game.x),
         Camera3d::default(),
         Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));

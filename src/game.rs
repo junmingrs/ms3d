@@ -18,7 +18,7 @@ pub struct Game {
     pub y: usize,
     pub z: usize,
     map: Vec<Vec<Vec<Block>>>,
-    bombs: usize,
+    pub bombs: usize,
     pub current_layer: usize,
     pub max_layer: usize,
     is_opened: bool,

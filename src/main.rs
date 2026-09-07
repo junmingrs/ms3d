@@ -1,10 +1,9 @@
 use bevy::{
     asset::RenderAssetUsages,
     camera::RenderTarget,
-    color::palettes::css::{BLACK, GREY, WHITE},
+    color::palettes::css::{BLACK, GREY},
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
     input::mouse::MouseWheel,
-    input_focus::InputFocus,
     prelude::*,
     render::render_resource::{self, TextureFormat, TextureUsages},
     text::{EditableText, EditableTextFilter, TextCursorStyle},
@@ -13,9 +12,7 @@ use bevy::{
 use crate::{camera::Camera, game::Game};
 
 mod camera;
-mod cube;
 mod game;
-mod moving;
 
 #[derive(Clone, Component, Default)]
 struct Cube {
@@ -25,7 +22,7 @@ struct Cube {
     is_selectable: bool,
     is_selected: bool,
     is_hovered: bool,
-    is_opened: bool,
+    // is_opened: bool,
     layer: usize,
 }
 
@@ -48,6 +45,9 @@ struct SurfaceBackground(Entity);
 struct MainMenuRoot;
 
 #[derive(Component)]
+struct PlaceholderTextFor(Entity);
+
+#[derive(Component)]
 struct CubeInput;
 
 #[derive(Component)]
@@ -58,7 +58,6 @@ enum GameState {
     #[default]
     MainMenu,
     Playing,
-    GameEnd,
 }
 
 fn main() {
@@ -86,7 +85,7 @@ fn main() {
             },
         ))
         .init_state::<GameState>()
-        .add_systems(Startup, main_menu)
+        .add_systems(OnEnter(GameState::MainMenu), main_menu)
         .add_systems(Update, text_submission)
         .add_systems(OnEnter(GameState::Playing), spawn_scene)
         // .add_systems(Startup, setup_highlight_gizmo_config)
@@ -97,15 +96,33 @@ fn main() {
             Update,
             (scroll, movement, update_camera, update_text).run_if(in_state(GameState::Playing)),
         )
-        // .add_systems(Update, scroll)
-        // .add_systems(Update, movement)
-        // .add_systems(Update, update_camera)
-        // .add_systems(Update, update_text)
-        // .add_systems(Update, draw_cube_edges)
+        .add_systems(Update, update_placeholder)
         .run();
 }
 
-fn main_menu(mut commands: Commands) {
+fn update_placeholder(
+    editable_query: Query<&EditableText, Changed<EditableText>>,
+    mut placeholder_query: Query<(&PlaceholderTextFor, &mut Visibility), With<PlaceholderTextFor>>,
+) {
+    for (PlaceholderTextFor(input_entity), mut visibility) in &mut placeholder_query {
+        if let Ok(editable) = editable_query.get(*input_entity) {
+            *visibility = if editable.value().to_string().is_empty() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            }
+        }
+    }
+}
+
+fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
+    let mut cube = 0;
+    let mut bombs = 0;
+    if let Some(game) = game {
+        cube = game.x;
+        bombs = game.bombs;
+    }
+
     commands.spawn(Camera2d);
     let root = commands
         .spawn((
@@ -159,13 +176,13 @@ fn main_menu(mut commands: Commands) {
         .id();
     let cube_input = commands
         .spawn((
+            CubeInput,
             Node {
                 width: Val::Percent(25.),
                 height: Val::Percent(100.),
                 border: Val::Px(2.).all(),
                 ..Default::default()
             },
-            CubeInput,
             EditableText {
                 visible_width: Some(10.),
                 allow_newlines: false,
@@ -182,6 +199,17 @@ fn main_menu(mut commands: Commands) {
             TextCursorStyle::default(),
             BackgroundColor(GREY.into()),
             BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let cube_placeholder = commands
+        .spawn((
+            PlaceholderTextFor(cube_input),
+            Text::new(cube.to_string()),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
         ))
         .id();
     let bomb_label_box = commands
@@ -208,13 +236,13 @@ fn main_menu(mut commands: Commands) {
         .id();
     let bomb_input = commands
         .spawn((
+            BombInput,
             Node {
                 width: Val::Percent(25.),
                 height: Val::Percent(100.),
                 border: Val::Px(2.).all(),
                 ..Default::default()
             },
-            BombInput,
             EditableText {
                 visible_width: Some(10.),
                 allow_newlines: false,
@@ -233,23 +261,43 @@ fn main_menu(mut commands: Commands) {
             BorderColor::all(Color::WHITE),
         ))
         .id();
+    let bomb_placeholder = commands
+        .spawn((
+            PlaceholderTextFor(bomb_input),
+            Text::new(bombs.to_string()),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
+        ))
+        .id();
     let top_label = commands
         .entity(cube_label_box)
         .add_children(&[cube_label_text])
         .id();
-    let t = commands
+    let cube_input = commands
+        .entity(cube_input)
+        .add_children(&[cube_placeholder])
+        .id();
+    let top = commands
         .entity(top)
         .add_children(&[top_label, cube_input])
         .id();
+
     let bottom_label = commands
         .entity(bomb_label_box)
         .add_children(&[bomb_label_text])
         .id();
-    let b = commands
+    let bomb_input = commands
+        .entity(bomb_input)
+        .add_children(&[bomb_placeholder])
+        .id();
+    let bottom = commands
         .entity(bottom)
         .add_children(&[bottom_label, bomb_input])
         .id();
-    commands.entity(root).add_children(&[t, b]);
+    commands.entity(root).add_children(&[top, bottom]);
 }
 
 fn text_submission(
@@ -366,6 +414,7 @@ fn movement(
     }
 }
 
+// TODO: fix scroll distance
 fn scroll(
     mut input: MessageReader<MouseWheel>,
     mut game: ResMut<Game>,
@@ -530,7 +579,7 @@ fn spawn_scene(
                             is_selectable,
                             is_hovered: false,
                             is_selected: false,
-                            is_opened: false,
+                            // is_opened: false,
                         },
                         Pickable::default(),
                         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
@@ -558,16 +607,20 @@ fn spawn_scene(
                     .observe(
                         move |click: On<Pointer<Click>>,
                               query: Query<&mut Cube>,
-                              mut game: ResMut<Game>| {
+                              mut game: ResMut<Game>,
+                              mut game_state: ResMut<NextState<GameState>>| {
                             match click.button {
                                 PointerButton::Primary => {
                                     if let Ok(cube) = query.get(click.entity)
                                         && cube.is_selectable
                                     {
-                                        // info!("cube clicked {}, {}, {}", pos_x, pos_y, pos_z);
-                                        // cube.is_selected = true;
-                                        // cube.is_opened = true;
                                         game.open(cube.row, cube.height, cube.depth);
+                                        if let Some(block) =
+                                            game.get_block(cube.row, cube.height, cube.depth)
+                                            && block.is_bomb
+                                        {
+                                            game_state.set(GameState::MainMenu);
+                                        }
                                     }
                                 }
                                 PointerButton::Secondary => {}

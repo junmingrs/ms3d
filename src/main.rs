@@ -1,10 +1,13 @@
 use bevy::{
     asset::RenderAssetUsages,
     camera::RenderTarget,
+    color::palettes::css::{BLACK, GREY, WHITE},
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
     input::mouse::MouseWheel,
+    input_focus::InputFocus,
     prelude::*,
     render::render_resource::{self, TextureFormat, TextureUsages},
+    text::{EditableText, EditableTextFilter, TextCursorStyle},
 };
 
 use crate::{camera::Camera, game::Game};
@@ -41,12 +44,24 @@ struct SurfaceText(Entity);
 #[derive(Component)]
 struct SurfaceBackground(Entity);
 
-fn main() {
-    let cube = 3;
-    let bombs = 3;
-    let game = Game::new(cube, cube, cube, bombs);
-    let camera = Camera::new(&cube);
+#[derive(Component)]
+struct MainMenuRoot;
 
+#[derive(Component)]
+struct CubeInput;
+
+#[derive(Component)]
+struct BombInput;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
+enum GameState {
+    #[default]
+    MainMenu,
+    Playing,
+    GameEnd,
+}
+
+fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
@@ -70,19 +85,206 @@ fn main() {
                 },
             },
         ))
-        .insert_resource(game)
-        .insert_resource(camera)
-        .add_systems(Startup, spawn_scene)
+        .init_state::<GameState>()
+        .add_systems(Startup, main_menu)
+        .add_systems(Update, text_submission)
+        .add_systems(OnEnter(GameState::Playing), spawn_scene)
         // .add_systems(Startup, setup_highlight_gizmo_config)
         // .init_gizmo_group::<HoverGizmos>()
         // .init_gizmo_group::<SelectableGizmos>()
         // .init_gizmo_group::<NotSelectableGizmos>()
-        .add_systems(Update, scroll)
-        .add_systems(Update, movement)
-        .add_systems(Update, update_camera)
-        .add_systems(Update, update_text)
+        .add_systems(
+            Update,
+            (scroll, movement, update_camera, update_text).run_if(in_state(GameState::Playing)),
+        )
+        // .add_systems(Update, scroll)
+        // .add_systems(Update, movement)
+        // .add_systems(Update, update_camera)
+        // .add_systems(Update, update_text)
         // .add_systems(Update, draw_cube_edges)
         .run();
+}
+
+fn main_menu(mut commands: Commands) {
+    commands.spawn(Camera2d);
+    let root = commands
+        .spawn((
+            MainMenuRoot,
+            Node {
+                width: Val::Px(200.),
+                height: Val::Px(100.),
+                justify_self: JustifySelf::Center,
+                align_self: AlignSelf::Center,
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(Val::Px(1.)),
+                ..Default::default()
+            },
+        ))
+        .id();
+    let top = commands
+        .spawn(Node {
+            height: Val::Percent(50.),
+            width: Val::Percent(100.),
+            ..Default::default()
+        })
+        .id();
+    let bottom = commands
+        .spawn(Node {
+            height: Val::Percent(50.),
+            width: Val::Percent(100.),
+            ..Default::default()
+        })
+        .id();
+    let cube_label_box = commands
+        .spawn((
+            Node {
+                height: Val::Percent(100.),
+                width: Val::Percent(75.),
+                border: Val::Px(2.).all(),
+                ..Default::default()
+            },
+            BackgroundColor(GREY.into()),
+            BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let cube_label_text = commands
+        .spawn((
+            Text("Enter cube:".into()),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
+        ))
+        .id();
+    let cube_input = commands
+        .spawn((
+            Node {
+                width: Val::Percent(25.),
+                height: Val::Percent(100.),
+                border: Val::Px(2.).all(),
+                ..Default::default()
+            },
+            CubeInput,
+            EditableText {
+                visible_width: Some(10.),
+                allow_newlines: false,
+                max_characters: Some(1),
+                ..Default::default()
+            },
+            EditableTextFilter::new(|c| c.is_numeric()),
+            TextLayout::no_wrap(),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(BLACK.into()),
+            TextCursorStyle::default(),
+            BackgroundColor(GREY.into()),
+            BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let bomb_label_box = commands
+        .spawn((
+            Node {
+                height: Val::Percent(100.),
+                width: Val::Percent(75.),
+                border: Val::Px(2.).all(),
+                ..Default::default()
+            },
+            BackgroundColor(GREY.into()),
+            BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let bomb_label_text = commands
+        .spawn((
+            Text("Enter bombs:".into()),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
+        ))
+        .id();
+    let bomb_input = commands
+        .spawn((
+            Node {
+                width: Val::Percent(25.),
+                height: Val::Percent(100.),
+                border: Val::Px(2.).all(),
+                ..Default::default()
+            },
+            BombInput,
+            EditableText {
+                visible_width: Some(10.),
+                allow_newlines: false,
+                max_characters: Some(1),
+                ..Default::default()
+            },
+            EditableTextFilter::new(|c| c.is_numeric()),
+            TextLayout::no_wrap(),
+            TextFont {
+                font_size: FontSize::Px(20.),
+                ..Default::default()
+            },
+            TextColor(BLACK.into()),
+            TextCursorStyle::default(),
+            BackgroundColor(GREY.into()),
+            BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let top_label = commands
+        .entity(cube_label_box)
+        .add_children(&[cube_label_text])
+        .id();
+    let t = commands
+        .entity(top)
+        .add_children(&[top_label, cube_input])
+        .id();
+    let bottom_label = commands
+        .entity(bomb_label_box)
+        .add_children(&[bomb_label_text])
+        .id();
+    let b = commands
+        .entity(bottom)
+        .add_children(&[bottom_label, bomb_input])
+        .id();
+    commands.entity(root).add_children(&[t, b]);
+}
+
+fn text_submission(
+    mut commands: Commands,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut game_state: ResMut<NextState<GameState>>,
+    cube_input: Query<&EditableText, With<CubeInput>>,
+    bomb_input: Query<&EditableText, With<BombInput>>,
+    menu_root: Query<Entity, With<MainMenuRoot>>,
+) {
+    if let NextState::Pending(GameState::Playing) = game_state.as_ref() {
+        return;
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Enter)
+        && let Ok(cube_input) = cube_input.single()
+        && let Ok(bomb_input) = bomb_input.single()
+    {
+        let cube_str = cube_input.value().to_string();
+        let cube_val: usize = cube_str.parse().unwrap();
+        let cube = cube_val;
+        let bombs_str = bomb_input.value().to_string();
+        let bombs_val: usize = bombs_str.parse().unwrap();
+        let bombs = bombs_val;
+        let game = Game::new(cube, cube, cube, bombs);
+        let camera = Camera::new(&cube);
+        commands.insert_resource(game);
+        commands.insert_resource(camera);
+
+        for entity in &menu_root {
+            commands.entity(entity).despawn();
+        }
+
+        game_state.set(GameState::Playing);
+    }
 }
 
 fn update_text(

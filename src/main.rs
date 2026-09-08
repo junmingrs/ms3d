@@ -14,26 +14,26 @@ use crate::{camera::Camera, game::Game};
 mod camera;
 mod game;
 
+const DEFAULT_CUBES: usize = 3;
+const DEFAULT_BOMBS: usize = 3;
+
 #[derive(Clone, Component, Default)]
 struct Cube {
     row: usize,
     height: usize,
     depth: usize,
     is_selectable: bool,
-    is_selected: bool,
-    is_hovered: bool,
-    // is_opened: bool,
     layer: usize,
 }
 
-#[derive(Default, Reflect, GizmoConfigGroup)]
-struct HoverGizmos;
-
-#[derive(Default, Reflect, GizmoConfigGroup)]
-struct SelectableGizmos;
-
-#[derive(Default, Reflect, GizmoConfigGroup)]
-struct NotSelectableGizmos;
+// #[derive(Default, Reflect, GizmoConfigGroup)]
+// struct HoverGizmos;
+//
+// #[derive(Default, Reflect, GizmoConfigGroup)]
+// struct SelectableGizmos;
+//
+// #[derive(Default, Reflect, GizmoConfigGroup)]
+// struct NotSelectableGizmos;
 
 #[derive(Component)]
 struct SurfaceText(Entity);
@@ -94,7 +94,14 @@ fn main() {
         // .init_gizmo_group::<NotSelectableGizmos>()
         .add_systems(
             Update,
-            (scroll, movement, update_camera, update_text).run_if(in_state(GameState::Playing)),
+            (
+                scroll,
+                movement,
+                update_camera,
+                update_text,
+                update_cube_colour,
+            )
+                .run_if(in_state(GameState::Playing)),
         )
         .add_systems(Update, update_placeholder)
         .run();
@@ -116,8 +123,8 @@ fn update_placeholder(
 }
 
 fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
-    let mut cube = 0;
-    let mut bombs = 0;
+    let mut cube = DEFAULT_CUBES;
+    let mut bombs = DEFAULT_BOMBS;
     if let Some(game) = game {
         cube = game.x;
         bombs = game.bombs;
@@ -127,6 +134,7 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
     let root = commands
         .spawn((
             MainMenuRoot,
+            DespawnOnExit(GameState::Playing),
             Node {
                 width: Val::Px(200.),
                 height: Val::Px(100.),
@@ -204,6 +212,7 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
     let cube_placeholder = commands
         .spawn((
             PlaceholderTextFor(cube_input),
+            Name::new("cube"),
             Text::new(cube.to_string()),
             TextFont {
                 font_size: FontSize::Px(20.),
@@ -264,6 +273,7 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
     let bomb_placeholder = commands
         .spawn((
             PlaceholderTextFor(bomb_input),
+            Name::new("bombs"),
             Text::new(bombs.to_string()),
             TextFont {
                 font_size: FontSize::Px(20.),
@@ -317,15 +327,20 @@ fn text_submission(
         && let Ok(bomb_input) = bomb_input.single()
     {
         let cube_str = cube_input.value().to_string();
-        let cube_val: usize = cube_str.parse().unwrap();
-        let cube = cube_val;
+        let cube_val = if cube_str.is_empty() {
+            DEFAULT_CUBES 
+        } else {
+            cube_str.parse().unwrap()
+        };
         let bombs_str = bomb_input.value().to_string();
-        let bombs_val: usize = bombs_str.parse().unwrap();
-        let bombs = bombs_val;
-        let game = Game::new(cube, cube, cube, bombs);
-        let camera = Camera::new(&cube);
+        let bombs_val = if bombs_str.is_empty() {
+            DEFAULT_BOMBS 
+        } else {
+            bombs_str.parse().unwrap()
+        };
+        let game = Game::new(cube_val, cube_val, cube_val, bombs_val);
+
         commands.insert_resource(game);
-        commands.insert_resource(camera);
 
         for entity in &menu_root {
             commands.entity(entity).despawn();
@@ -414,7 +429,25 @@ fn movement(
     }
 }
 
-// TODO: fix scroll distance
+fn update_cube_colour(
+    game: ResMut<Game>,
+    cube_query: Query<(&Cube, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (cube, material) in cube_query {
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            let block = game.get_block(cube.row, cube.height, cube.depth).unwrap();
+            if block.is_revealed {
+                if block.is_bomb {
+                    material.base_color = Color::Srgba(Srgba::rgba_u8(200, 100, 100, 100));
+                } else {
+                    material.base_color = Color::Srgba(Srgba::rgba_u8(100, 200, 100, 100));
+                }
+            }
+        }
+    }
+}
+
 fn scroll(
     mut input: MessageReader<MouseWheel>,
     mut game: ResMut<Game>,
@@ -429,25 +462,11 @@ fn scroll(
         } else if wheel.y < 0.0 && game.current_layer > 0 {
             game.current_layer -= 1;
         }
-        camera.current_layer = game.current_layer;
-        let scroll = (game.max_layer - game.current_layer + 5) as f32;
-        camera.scroll_camera(scroll);
+        camera.scroll_camera((game.x - game.current_layer) * 2);
     }
     for (mut cube, material, mut pickable) in &mut cube_query {
         cube.is_selectable = cube.layer == game.current_layer;
-        if !cube.is_selectable {
-            cube.is_selected = false;
-            cube.is_hovered = false;
-        }
         if let Some(mut material) = materials.get_mut(&material.0) {
-            let block = game.get_block(cube.row, cube.height, cube.depth).unwrap();
-            if block.is_revealed {
-                if block.is_bomb {
-                    material.base_color = Color::Srgba(Srgba::rgba_u8(200, 100, 100, 100));
-                } else {
-                    material.base_color = Color::Srgba(Srgba::rgba_u8(100, 200, 100, 100));
-                }
-            }
             for (SurfaceBackground(_cube_entity), mut bg_colour) in &mut bg_query {
                 if cube.layer < game.current_layer {
                     bg_colour.0.set_alpha(0.1);
@@ -518,6 +537,7 @@ fn spawn_scene(
                             ..Default::default()
                         },
                         RenderTarget::Image(image_handle.clone().into()),
+                        DespawnOnExit(GameState::Playing)
                     ))
                     .id();
                 let cube_entity = commands.spawn_empty().id();
@@ -577,33 +597,34 @@ fn spawn_scene(
                             depth,
                             layer,
                             is_selectable,
-                            is_hovered: false,
-                            is_selected: false,
+                            // is_hovered: false,
+                            // is_selected: false,
                             // is_opened: false,
                         },
                         Pickable::default(),
                         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
                         MeshMaterial3d(material_handle),
                         Transform::from_xyz(pos_x, pos_y, pos_z),
+                        DespawnOnExit(GameState::Playing)
                     ))
-                    .observe(
-                        move |hover: On<Pointer<Enter>>, mut query: Query<&mut Cube>| {
-                            if let Ok(mut cube) = query.get_mut(hover.entity)
-                                && cube.is_selectable
-                            {
-                                cube.is_hovered = true;
-                            }
-                        },
-                    )
-                    .observe(
-                        move |hover: On<Pointer<Leave>>, mut query: Query<&mut Cube>| {
-                            if let Ok(mut cube) = query.get_mut(hover.entity)
-                                && cube.is_selectable
-                            {
-                                cube.is_hovered = false;
-                            }
-                        },
-                    )
+                    // .observe(
+                    //     move |hover: On<Pointer<Enter>>, mut query: Query<&mut Cube>| {
+                    //         if let Ok(mut cube) = query.get_mut(hover.entity)
+                    //             && cube.is_selectable
+                    //         {
+                    //             cube.is_hovered = true;
+                    //         }
+                    //     },
+                    // )
+                    // .observe(
+                    //     move |hover: On<Pointer<Leave>>, mut query: Query<&mut Cube>| {
+                    //         if let Ok(mut cube) = query.get_mut(hover.entity)
+                    //             && cube.is_selectable
+                    //         {
+                    //             cube.is_hovered = false;
+                    //         }
+                    //     },
+                    // )
                     .observe(
                         move |click: On<Pointer<Click>>,
                               query: Query<&mut Cube>,

@@ -20,8 +20,6 @@ pub struct SphericalCoordinates {
 pub struct Camera {
     pub sphere_coords: SphericalCoordinates,
     pub world_coords: WorldCoordinates,
-    pub current_layer: usize,
-    // pub max_layer: usize,
 }
 
 // impl Default for Camera {
@@ -46,8 +44,6 @@ impl Camera {
         Self {
             sphere_coords,
             world_coords,
-            current_layer: 0,
-            // max_layer,
         }
     }
 
@@ -57,8 +53,8 @@ impl Camera {
             (self.sphere_coords.phi - delta.y * SENSITIVITY).clamp(0.01, 179.99);
     }
 
-    pub fn scroll_camera(&mut self, scroll: f32) {
-        self.sphere_coords.r = scroll;
+    pub fn scroll_camera(&mut self, zoom: usize) {
+        self.sphere_coords.r = zoom as f32;
     }
 
     pub fn update_world_coords(&mut self) {

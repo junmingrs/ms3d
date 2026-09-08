@@ -90,19 +90,18 @@ impl Game {
 
     pub fn generate_bombs(&mut self, x: usize, y: usize, z: usize) {
         let mut bomb_positions: Vec<(usize, usize, usize)> = Vec::new();
-        let mut remaining = self.x * self.y * self.z - 1;
+        let mut remaining_bombless = self.x * self.y * self.z - 1;
 
         for depth in self.map.iter() {
             for height in depth {
                 for row in height {
-                    if self.bombs > 0 && (row.x, row.y, row.z) != (x, y, z) {
+                    if bomb_positions.len() < self.bombs && (row.x, row.y, row.z) != (x, y, z) {
                         let is_bomb = rand::random_bool(
-                            self.bombs as f64 / remaining as f64,
+                            self.bombs as f64 / remaining_bombless as f64,
                         );
-                        remaining -= 1;
+                        remaining_bombless -= 1;
                         if is_bomb {
                             bomb_positions.push((row.x, row.y, row.z));
-                            self.bombs -= 1;
                         }
                     }
                 }

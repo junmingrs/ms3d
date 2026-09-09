@@ -126,7 +126,7 @@ impl Game {
         }
     }
 
-    pub fn open(&mut self, x: usize, y: usize, z: usize) {
+    pub fn open(&mut self, x: usize, y: usize, z: usize) -> Option<Vec<(usize, usize, usize)>> {
         if !self.is_opened {
             self.is_opened = true;
             self.generate_bombs(x, y, z);
@@ -134,8 +134,9 @@ impl Game {
         if let Some(block) = self.get_block_mut(x, y, z) {
             if block.is_revealed {
                 // info!("already opened, {} is bomb", block.is_bomb);
-                return;
+                return None;
             }
+            let mut opened_blocks = Vec::<(usize, usize, usize)>::new();
             // info!("opened, {} bombs, {} is bomb", block.nearby_bombs, block.is_bomb);
             block.is_revealed = true;
             let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
@@ -146,6 +147,7 @@ impl Game {
                 if let Some(block) = self.get_block_mut(x, y, z) {
                     // info!("opening!, {} bomb?", block.is_bomb);
                     block.is_revealed = true;
+                    opened_blocks.push((x, y, z));
                     if block.nearby_bombs > 0 {
                         continue;
                     }
@@ -161,7 +163,9 @@ impl Game {
                     }
                 }
             }
+            return Some(opened_blocks);
         }
+        None
     }
 
     fn get_offset_position(

@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use bevy::{
     asset::RenderAssetUsages,
     camera::RenderTarget,
@@ -17,14 +19,18 @@ mod game;
 const DEFAULT_CUBES: usize = 3;
 const DEFAULT_BOMBS: usize = 3;
 
-#[derive(Clone, Component, Default)]
+#[derive(Clone, Component)]
 struct Cube {
     row: usize,
     height: usize,
     depth: usize,
     is_selectable: bool,
     layer: usize,
+    texture_camera: Entity,
 }
+
+#[derive(Resource, Default)]
+struct CubeIndex(HashMap<(usize, usize, usize), Entity>);
 
 // #[derive(Default, Reflect, GizmoConfigGroup)]
 // struct HoverGizmos;
@@ -85,6 +91,7 @@ fn main() {
             },
         ))
         .init_state::<GameState>()
+        .init_resource::<CubeIndex>()
         .add_systems(OnEnter(GameState::MainMenu), main_menu)
         .add_systems(Update, text_submission)
         .add_systems(OnEnter(GameState::Playing), spawn_scene)
@@ -99,12 +106,38 @@ fn main() {
                 movement,
                 update_camera,
                 update_text,
-                update_cube_colour,
+                manage_texture_cameras,
             )
+                .chain()
                 .run_if(in_state(GameState::Playing)),
         )
         .add_systems(Update, update_placeholder)
         .run();
+}
+
+fn manage_texture_cameras(
+    mut initial_render_done: Local<HashSet<Entity>>,
+    cube_query: Query<(Entity, &Cube)>,
+    text_query: Query<&SurfaceText, Changed<Text>>,
+    bg_query: Query<&SurfaceBackground, Changed<BackgroundColor>>,
+    mut camera_query: Query<&mut bevy::camera::Camera, With<Camera2d>>,
+) {
+    let mut needs_render: HashSet<Entity> = HashSet::new();
+    for SurfaceText(cube_entity) in &text_query {
+        needs_render.insert(*cube_entity);
+    }
+    for SurfaceBackground(cube_entity) in &bg_query {
+        needs_render.insert(*cube_entity);
+    }
+
+    for (cube_entity, cube) in &cube_query {
+        let first_time = initial_render_done.insert(cube_entity); // true if newly inserted
+        let should_render = first_time || needs_render.contains(&cube_entity);
+
+        if let Ok(mut camera) = camera_query.get_mut(cube.texture_camera) {
+            camera.is_active = should_render;
+        }
+    }
 }
 
 fn update_placeholder(
@@ -317,6 +350,7 @@ fn text_submission(
     cube_input: Query<&EditableText, With<CubeInput>>,
     bomb_input: Query<&EditableText, With<BombInput>>,
     menu_root: Query<Entity, With<MainMenuRoot>>,
+    mut camera: Option<ResMut<Camera>>,
 ) {
     if let NextState::Pending(GameState::Playing) = game_state.as_ref() {
         return;
@@ -328,19 +362,32 @@ fn text_submission(
     {
         let cube_str = cube_input.value().to_string();
         let cube_val = if cube_str.is_empty() {
-            DEFAULT_CUBES 
+            DEFAULT_CUBES
         } else {
             cube_str.parse().unwrap()
         };
         let bombs_str = bomb_input.value().to_string();
         let bombs_val = if bombs_str.is_empty() {
-            DEFAULT_BOMBS 
+            DEFAULT_BOMBS
         } else {
             bombs_str.parse().unwrap()
         };
         let game = Game::new(cube_val, cube_val, cube_val, bombs_val);
 
         commands.insert_resource(game);
+        match camera {
+            Some(mut camera) => {
+                camera.scroll_camera(cube_val);
+            }
+            None => {
+                commands.spawn((
+                    Camera::new(&cube_val),
+                    Camera3d::default(),
+                    // TODO: fix camera initial position
+                    Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+                ));
+            }
+        }
 
         for entity in &menu_root {
             commands.entity(entity).despawn();
@@ -429,61 +476,53 @@ fn movement(
     }
 }
 
-fn update_cube_colour(
-    game: ResMut<Game>,
-    cube_query: Query<(&Cube, &MeshMaterial3d<StandardMaterial>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    for (cube, material) in cube_query {
-        if let Some(mut material) = materials.get_mut(&material.0) {
-            let block = game.get_block(cube.row, cube.height, cube.depth).unwrap();
-            if block.is_revealed {
-                if block.is_bomb {
-                    material.base_color = Color::Srgba(Srgba::rgba_u8(200, 100, 100, 100));
-                } else {
-                    material.base_color = Color::Srgba(Srgba::rgba_u8(100, 200, 100, 100));
-                }
-            }
-        }
-    }
-}
-
 fn scroll(
     mut input: MessageReader<MouseWheel>,
     mut game: ResMut<Game>,
-    mut cube_query: Query<(&mut Cube, &MeshMaterial3d<StandardMaterial>, &mut Pickable)>,
+    mut cube_query: Query<(
+        Entity,
+        &mut Cube,
+        &MeshMaterial3d<StandardMaterial>,
+        &mut Pickable,
+    )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bg_query: Query<(&SurfaceBackground, &mut BackgroundColor)>,
     mut camera: ResMut<Camera>,
 ) {
+    let mut layer_changed = false;
     for wheel in input.read() {
         if wheel.y > 0.0 && game.current_layer < game.max_layer {
             game.current_layer += 1;
+            layer_changed = true;
         } else if wheel.y < 0.0 && game.current_layer > 0 {
             game.current_layer -= 1;
+            layer_changed = true;
         }
         camera.scroll_camera((game.x - game.current_layer) * 2);
     }
-    for (mut cube, material, mut pickable) in &mut cube_query {
+
+    if !layer_changed {
+        return;
+    }
+
+    let mut dim_state: HashMap<Entity, bool> = HashMap::new();
+
+    for (entity, mut cube, material, mut pickable) in &mut cube_query {
         cube.is_selectable = cube.layer == game.current_layer;
+        let dim = cube.layer < game.current_layer;
+        dim_state.insert(entity, dim);
         if let Some(mut material) = materials.get_mut(&material.0) {
-            for (SurfaceBackground(_cube_entity), mut bg_colour) in &mut bg_query {
-                if cube.layer < game.current_layer {
-                    bg_colour.0.set_alpha(0.1);
-                } else {
-                    bg_colour.0.set_alpha(1.0);
-                }
-            }
-            if cube.layer < game.current_layer {
-                material.base_color.set_alpha(0.1);
-            } else {
-                material.base_color.set_alpha(1.0);
-            }
+            material.base_color.set_alpha(if dim { 0.1 } else { 1.0 });
         }
-        *pickable = if cube.layer < game.current_layer {
+        *pickable = if dim {
             Pickable::IGNORE
         } else {
             Pickable::default()
+        };
+    }
+    for (SurfaceBackground(cube_entity), mut bg_colour) in &mut bg_query {
+        if let Some(&dim) = dim_state.get(cube_entity) {
+            bg_colour.0.set_alpha(if dim { 0.1 } else { 1.0 });
         }
     }
 }
@@ -494,6 +533,7 @@ fn spawn_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut cube_index: ResMut<CubeIndex>,
 ) {
     for depth in 0..game.z {
         for height in 0..game.y {
@@ -537,10 +577,11 @@ fn spawn_scene(
                             ..Default::default()
                         },
                         RenderTarget::Image(image_handle.clone().into()),
-                        DespawnOnExit(GameState::Playing)
+                        DespawnOnExit(GameState::Playing),
                     ))
                     .id();
                 let cube_entity = commands.spawn_empty().id();
+                cube_index.0.insert((row, height, depth), cube_entity);
                 let is_white = (row + height + depth) % 2 == 0;
                 let bg_colour = if is_white {
                     Color::srgb(170.0 / 256.0, 215.0 / 256.0, 81.0 / 256.0)
@@ -597,50 +638,46 @@ fn spawn_scene(
                             depth,
                             layer,
                             is_selectable,
-                            // is_hovered: false,
-                            // is_selected: false,
-                            // is_opened: false,
+                            texture_camera,
                         },
                         Pickable::default(),
                         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
                         MeshMaterial3d(material_handle),
                         Transform::from_xyz(pos_x, pos_y, pos_z),
-                        DespawnOnExit(GameState::Playing)
+                        DespawnOnExit(GameState::Playing),
                     ))
-                    // .observe(
-                    //     move |hover: On<Pointer<Enter>>, mut query: Query<&mut Cube>| {
-                    //         if let Ok(mut cube) = query.get_mut(hover.entity)
-                    //             && cube.is_selectable
-                    //         {
-                    //             cube.is_hovered = true;
-                    //         }
-                    //     },
-                    // )
-                    // .observe(
-                    //     move |hover: On<Pointer<Leave>>, mut query: Query<&mut Cube>| {
-                    //         if let Ok(mut cube) = query.get_mut(hover.entity)
-                    //             && cube.is_selectable
-                    //         {
-                    //             cube.is_hovered = false;
-                    //         }
-                    //     },
-                    // )
                     .observe(
                         move |click: On<Pointer<Click>>,
-                              query: Query<&mut Cube>,
+                              cube_query: Query<(&Cube, &MeshMaterial3d<StandardMaterial>)>,
                               mut game: ResMut<Game>,
-                              mut game_state: ResMut<NextState<GameState>>| {
+                              mut materials: ResMut<Assets<StandardMaterial>>,
+                              mut game_state: ResMut<NextState<GameState>>,
+                              cube_index: Res<CubeIndex>| {
                             match click.button {
                                 PointerButton::Primary => {
-                                    if let Ok(cube) = query.get(click.entity)
+                                    if let Ok((cube, _)) = cube_query.get(click.entity)
                                         && cube.is_selectable
+                                        && let Some(opened_blocks) =
+                                            game.open(cube.row, cube.height, cube.depth)
                                     {
-                                        game.open(cube.row, cube.height, cube.depth);
-                                        if let Some(block) =
-                                            game.get_block(cube.row, cube.height, cube.depth)
-                                            && block.is_bomb
-                                        {
-                                            game_state.set(GameState::MainMenu);
+                                        for (x, y, z) in opened_blocks {
+                                            if let Some(&entity) = cube_index.0.get(&(x, y, z))
+                                                && let Ok((_, material)) = cube_query.get(entity)
+                                                && let Some(mut mat) =
+                                                    materials.get_mut(&material.0)
+                                                && let Some(block) = game.get_block(x, y, z)
+                                            {
+                                                if block.is_bomb {
+                                                    mat.base_color = Color::Srgba(Srgba::rgba_u8(
+                                                        200, 100, 100, 100,
+                                                    ));
+                                                    game_state.set(GameState::MainMenu);
+                                                } else {
+                                                    mat.base_color = Color::Srgba(Srgba::rgba_u8(
+                                                        100, 200, 100, 100,
+                                                    ));
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -658,9 +695,9 @@ fn spawn_scene(
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
     ));
-    commands.spawn((
-        Camera::new(&game.x),
-        Camera3d::default(),
-        Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+    // commands.spawn((
+    //     Camera::new(&game.x),
+    //     Camera3d::default(),
+    //     Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+    // ));
 }

@@ -350,7 +350,7 @@ fn text_submission(
     cube_input: Query<&EditableText, With<CubeInput>>,
     bomb_input: Query<&EditableText, With<BombInput>>,
     menu_root: Query<Entity, With<MainMenuRoot>>,
-    mut camera: Option<ResMut<Camera>>,
+    camera: Option<ResMut<Camera>>,
 ) {
     if let NextState::Pending(GameState::Playing) = game_state.as_ref() {
         return;
@@ -377,14 +377,19 @@ fn text_submission(
         commands.insert_resource(game);
         match camera {
             Some(mut camera) => {
-                camera.scroll_camera(cube_val);
+                camera.scroll_camera(cube_val * 2);
             }
             None => {
+                let camera = Camera::new(&cube_val);
                 commands.spawn((
-                    Camera::new(&cube_val),
                     Camera3d::default(),
-                    // TODO: fix camera initial position
-                    Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+                    Transform::from_xyz(
+                        camera.world_coords.x,
+                        camera.world_coords.y,
+                        camera.world_coords.z,
+                    )
+                    .looking_at(Vec3::ZERO, Vec3::Y),
+                    camera,
                 ));
             }
         }

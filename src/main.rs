@@ -83,7 +83,7 @@ fn main() {
                     refresh_interval: core::time::Duration::from_millis(100),
                     enabled: true,
                     frame_time_graph_config: FrameTimeGraphConfig {
-                        enabled: false,
+                        enabled: true,
                         min_fps: 30.0,
                         target_fps: 144.0,
                     },
@@ -101,13 +101,7 @@ fn main() {
         // .init_gizmo_group::<NotSelectableGizmos>()
         .add_systems(
             Update,
-            (
-                scroll,
-                movement,
-                update_camera,
-                update_text,
-                manage_texture_cameras,
-            )
+            (scroll, movement, update_camera, manage_texture_cameras)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
@@ -402,22 +396,6 @@ fn text_submission(
     }
 }
 
-fn update_text(
-    game: Res<Game>,
-    mut query: Query<(&mut Text, &SurfaceText)>,
-    cube_query: Query<&Cube>,
-) {
-    for (mut text, SurfaceText(cube_entity)) in &mut query {
-        if let Ok(cube) = cube_query.get(*cube_entity)
-            && let Some(block) = game.get_block(cube.row, cube.height, cube.depth)
-            && block.is_revealed
-            && !block.is_bomb
-        {
-            text.0 = format!("{}", block.nearby_bombs);
-        }
-    }
-}
-
 fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, With<Camera3d>>) {
     for mut transform in &mut query {
         camera.update_world_coords();
@@ -518,6 +496,11 @@ fn scroll(
         dim_state.insert(entity, dim);
         if let Some(mut material) = materials.get_mut(&material.0) {
             material.base_color.set_alpha(if dim { 0.1 } else { 1.0 });
+            material.alpha_mode = if dim {
+                AlphaMode::Blend
+            } else {
+                AlphaMode::Opaque
+            };
         }
         *pickable = if dim {
             Pickable::IGNORE
@@ -540,6 +523,7 @@ fn spawn_scene(
     mut images: ResMut<Assets<Image>>,
     mut cube_index: ResMut<CubeIndex>,
 ) {
+    let shared_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     for depth in 0..game.z {
         for height in 0..game.y {
             for row in 0..game.x {
@@ -630,7 +614,7 @@ fn spawn_scene(
                 let material_handle = materials.add(StandardMaterial {
                     base_color_texture: Some(image_handle),
                     reflectance: 0.0,
-                    alpha_mode: AlphaMode::Blend,
+                    alpha_mode: AlphaMode::Opaque,
                     unlit: true,
                     ..Default::default()
                 });
@@ -646,7 +630,7 @@ fn spawn_scene(
                             texture_camera,
                         },
                         Pickable::default(),
-                        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+                        Mesh3d(shared_mesh.clone()),
                         MeshMaterial3d(material_handle),
                         Transform::from_xyz(pos_x, pos_y, pos_z),
                         DespawnOnExit(GameState::Playing),
@@ -654,6 +638,7 @@ fn spawn_scene(
                     .observe(
                         move |click: On<Pointer<Click>>,
                               cube_query: Query<(&Cube, &MeshMaterial3d<StandardMaterial>)>,
+                              mut text_query: Query<(&mut Text, &SurfaceText)>,
                               mut game: ResMut<Game>,
                               mut materials: ResMut<Assets<StandardMaterial>>,
                               mut game_state: ResMut<NextState<GameState>>,
@@ -674,13 +659,28 @@ fn spawn_scene(
                                             {
                                                 if block.is_bomb {
                                                     mat.base_color = Color::Srgba(Srgba::rgba_u8(
-                                                        200, 100, 100, 100,
+                                                        200,
+                                                        100,
+                                                        100,
+                                                        u8::MAX,
                                                     ));
                                                     game_state.set(GameState::MainMenu);
                                                 } else {
                                                     mat.base_color = Color::Srgba(Srgba::rgba_u8(
-                                                        100, 200, 100, 100,
+                                                        100,
+                                                        200,
+                                                        100,
+                                                        u8::MAX,
                                                     ));
+                                                    for (mut text, SurfaceText(text_cube_entity)) in
+                                                        &mut text_query
+                                                    {
+                                                        if *text_cube_entity == entity {
+                                                            text.0 =
+                                                                format!("{}", block.nearby_bombs);
+                                                            break;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -700,9 +700,4 @@ fn spawn_scene(
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
     ));
-    // commands.spawn((
-    //     Camera::new(&game.x),
-    //     Camera3d::default(),
-    //     Transform::from_xyz(40.0, -10.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
-    // ));
 }

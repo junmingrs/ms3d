@@ -1,18 +1,16 @@
 use bevy::{
-    camera::visibility::Visibility,
     ecs::{
         entity::Entity,
-        query::{Changed, With},
+        query::With,
         system::{Commands, Query, Res, ResMut, SystemParam},
     },
     input::{ButtonInput, keyboard::KeyCode},
     state::state::NextState,
     text::EditableText,
-    ui::widget::Text,
 };
 
 use crate::{
-    CubeInput, DEFAULT_CUBES, GameState, MainMenuRoot, PlaceholderTextFor,
+    CubeInput, DEFAULT_CUBES, GameState, MainMenuRoot,
     camera::Camera,
     cube::{CubeCleanup, CubeOpener, CubeSpawner},
     game::Game,
@@ -21,24 +19,8 @@ use crate::{
 #[derive(SystemParam)]
 pub struct MenuInput<'w, 's> {
     cube_input: Query<'w, 's, &'static EditableText, With<CubeInput>>,
-    // cube_placeholder: Query<'w, 's, &'static Text, With<PlaceholderTextFor>>,
     menu_root: Query<'w, 's, Entity, With<MainMenuRoot>>,
 }
-
-// pub fn update_placeholder(
-//     editable_query: Query<&EditableText, Changed<EditableText>>,
-//     mut placeholder_query: Query<(&PlaceholderTextFor, &mut Visibility), With<PlaceholderTextFor>>,
-// ) {
-//     for (PlaceholderTextFor(input_entity), mut visibility) in &mut placeholder_query {
-//         if let Ok(editable) = editable_query.get(*input_entity) {
-//             *visibility = if editable.value().to_string().is_empty() {
-//                 Visibility::Inherited
-//             } else {
-//                 Visibility::Hidden
-//             }
-//         }
-//     }
-// }
 
 pub fn text_submission(
     mut commands: Commands,
@@ -55,14 +37,8 @@ pub fn text_submission(
     if keyboard_input.just_pressed(KeyCode::Enter)
         && let Ok(cube_input) = menu_input.cube_input.single()
     {
-        // let cube_placeholder = menu_input.cube_placeholder.single().unwrap();
         let cube_str = cube_input.value().to_string();
         let cube_val: usize = if cube_str.is_empty() || cube_str == "0" {
-            // if cube_placeholder.is_empty() || cube_placeholder.0 == "0" {
-            //     DEFAULT_CUBES
-            // } else {
-            //     cube_placeholder.parse().unwrap()
-            // }
             DEFAULT_CUBES
         } else {
             cube_str.parse().unwrap()

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::{
     asset::RenderAssetUsages,
     camera::RenderTarget,
-    color::palettes::css::{BLACK, GREY},
+    color::palettes::css::GREY,
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
     input::mouse::MouseWheel,
     prelude::*,
@@ -38,9 +38,6 @@ struct SurfaceBackground(Entity);
 
 #[derive(Component)]
 struct MainMenuRoot;
-
-#[derive(Component)]
-struct PlaceholderTextFor(Entity);
 
 #[derive(Component)]
 struct CubeInput;
@@ -108,7 +105,6 @@ fn main() {
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
-        // .add_systems(Update, update_placeholder)
         .run();
 }
 

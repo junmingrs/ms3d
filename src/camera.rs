@@ -22,22 +22,11 @@ pub struct Camera {
     pub world_coords: WorldCoordinates,
 }
 
-// impl Default for Camera {
-//     fn default() -> Self {
-//         Self {
-//             sphere_coords: SphericalCoordinates::default(),
-//             world_coords: WorldCoordinates::default(),
-//             current_layer: 0,
-//             // max_layer: 1,
-//         }
-//     }
-// }
-
 impl Camera {
     pub fn new(cube: &usize) -> Self {
         let d = *cube as f32;
         let (_, theta, phi) = Self::convert_cartesian_sphere(&d, &d, &d);
-        let r = *cube as f32 * 2.0;
+        let r = *cube as f32 * 3.0;
         let sphere_coords = SphericalCoordinates { r, theta, phi };
         let (x, y, z) = Self::convert_sphere_cartesian(&r, &theta, &phi);
         let world_coords = WorldCoordinates { x, y, z };

@@ -11,35 +11,24 @@ use bevy::{
     text::{EditableText, EditableTextFilter, TextCursorStyle},
 };
 
-use crate::{camera::Camera, game::Game};
+use crate::{
+    camera::Camera,
+    cube::{Cube, CubeOpener, CubeSpawner},
+    game::Game,
+    ui::text_submission,
+};
 
 mod camera;
+mod cube;
 mod game;
+mod ui;
 
 const DEFAULT_CUBES: usize = 3;
-const DEFAULT_BOMBS: usize = 3;
-
-#[derive(Clone, Component)]
-struct Cube {
-    row: usize,
-    height: usize,
-    depth: usize,
-    is_selectable: bool,
-    layer: usize,
-    texture_camera: Entity,
-}
+const CUBES_SPAWN_PER_FRAME: usize = 5;
+const CUBES_OPEN_PER_FRAME: usize = 100;
 
 #[derive(Resource, Default)]
 struct CubeIndex(HashMap<(usize, usize, usize), Entity>);
-
-// #[derive(Default, Reflect, GizmoConfigGroup)]
-// struct HoverGizmos;
-//
-// #[derive(Default, Reflect, GizmoConfigGroup)]
-// struct SelectableGizmos;
-//
-// #[derive(Default, Reflect, GizmoConfigGroup)]
-// struct NotSelectableGizmos;
 
 #[derive(Component)]
 struct SurfaceText(Entity);
@@ -56,12 +45,10 @@ struct PlaceholderTextFor(Entity);
 #[derive(Component)]
 struct CubeInput;
 
-#[derive(Component)]
-struct BombInput;
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
 enum GameState {
     #[default]
+    Loading,
     MainMenu,
     Playing,
 }
@@ -92,21 +79,201 @@ fn main() {
         ))
         .init_state::<GameState>()
         .init_resource::<CubeIndex>()
+        .add_systems(
+            Startup,
+            (spawn_light, spawn_camera3d, warmup_pipeline).chain(),
+        )
         .add_systems(OnEnter(GameState::MainMenu), main_menu)
-        .add_systems(Update, text_submission)
-        .add_systems(OnEnter(GameState::Playing), spawn_scene)
-        // .add_systems(Startup, setup_highlight_gizmo_config)
-        // .init_gizmo_group::<HoverGizmos>()
-        // .init_gizmo_group::<SelectableGizmos>()
-        // .init_gizmo_group::<NotSelectableGizmos>()
+        .add_systems(
+            Update,
+            text_submission.run_if(in_state(GameState::MainMenu)),
+        )
+        .add_systems(
+            Update,
+            spawn_cubes.run_if(
+                in_state(GameState::Playing)
+                    .and_then(|spawner: Res<CubeSpawner>| spawner.spawned < spawner.to_spawn),
+            ),
+        )
+        .add_systems(
+            Update,
+            open_cubes.run_if(
+                in_state(GameState::Playing)
+                    .and_then(|opener: Res<CubeOpener>| opener.opened < opener.to_open.len()),
+            ),
+        )
         .add_systems(
             Update,
             (scroll, movement, update_camera, manage_texture_cameras)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
-        .add_systems(Update, update_placeholder)
+        // .add_systems(Update, update_placeholder)
         .run();
+}
+
+fn open_cubes(
+    game: Res<Game>,
+    mut game_state: ResMut<NextState<GameState>>,
+    mut cube_opener: ResMut<CubeOpener>,
+    cube_index: Res<CubeIndex>,
+    mut text_query: Query<(&mut Text, &SurfaceText)>,
+    material_query: Query<&MeshMaterial3d<StandardMaterial>, With<Cube>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for _ in 0..CUBES_OPEN_PER_FRAME {
+        if cube_opener.opened >= cube_opener.to_open.len() {
+            cube_opener.to_open = Vec::new();
+            cube_opener.opened = 0;
+            break;
+        }
+
+        let (x, y, z) = cube_opener.to_open[cube_opener.opened];
+        if let Some(&entity) = cube_index.0.get(&(x, y, z))
+            && let Ok(mesh) = material_query.get(entity)
+            && let Some(mut mat) = materials.get_mut(&mesh.0)
+            && let Some(block) = game.get_block(x, y, z)
+        {
+            if block.is_bomb {
+                mat.base_color = Color::Srgba(Srgba::rgba_u8(200, 100, 100, u8::MAX));
+                game_state.set(GameState::MainMenu);
+            } else {
+                mat.base_color = Color::Srgba(Srgba::rgba_u8(100, 200, 100, u8::MAX));
+                for (mut text, SurfaceText(text_cube_entity)) in &mut text_query {
+                    if *text_cube_entity == entity {
+                        text.0 = format!("{}", block.nearby_bombs);
+                        break;
+                    }
+                }
+            }
+        }
+
+        cube_opener.opened += 1;
+    }
+}
+
+fn warmup_pipeline(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut game_state: ResMut<NextState<GameState>>,
+) {
+    let size = render_resource::Extent3d {
+        width: 4,
+        height: 4,
+        ..Default::default()
+    };
+    let mut image = Image::new_fill(
+        size,
+        render_resource::TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    image.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
+    let image_handle = images.add(image);
+
+    let material = materials.add(StandardMaterial {
+        base_color_texture: Some(image_handle),
+        reflectance: 0.0,
+        alpha_mode: AlphaMode::Opaque,
+        unlit: true,
+        ..Default::default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+        MeshMaterial3d(material.clone()),
+        Transform::from_xyz(0.0, -10000.0, 0.0),
+    ));
+
+    let blend_material = materials.add(StandardMaterial {
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..Default::default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+        MeshMaterial3d(blend_material),
+        Transform::from_xyz(0.0, -10000.0, 0.0),
+    ));
+
+    let warm_size = render_resource::Extent3d {
+        width: 256,
+        height: 256,
+        ..Default::default()
+    };
+    let mut warm_image = Image::new_fill(
+        warm_size,
+        render_resource::TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    warm_image.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
+    let warm_image_handle = images.add(warm_image);
+
+    let warm_camera = commands
+        .spawn((
+            Camera2d,
+            bevy::camera::Camera {
+                order: -1,
+                clear_color: ClearColorConfig::Custom(Color::NONE),
+                ..Default::default()
+            },
+            RenderTarget::Image(warm_image_handle.into()),
+        ))
+        .id();
+
+    commands
+        .spawn((
+            Node {
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..Default::default()
+            },
+            BackgroundColor(Color::WHITE),
+            UiTargetCamera(warm_camera),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("0123456789"), // force every digit glyph to rasterize now
+                TextFont {
+                    font_size: FontSize::Px(50.0),
+                    ..Default::default()
+                },
+                TextColor::BLACK,
+            ));
+        });
+
+    game_state.set(GameState::MainMenu);
+}
+
+fn spawn_camera3d(mut commands: Commands) {
+    let camera = Camera::new(&1);
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(
+            camera.world_coords.x,
+            camera.world_coords.y,
+            camera.world_coords.z,
+        )
+        .looking_at(Vec3::ZERO, Vec3::Y),
+        camera,
+    ));
+}
+
+fn spawn_light(mut commands: Commands) {
+    commands.spawn((
+        PointLight {
+            ..Default::default()
+        },
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
 }
 
 fn manage_texture_cameras(
@@ -134,64 +301,266 @@ fn manage_texture_cameras(
     }
 }
 
-fn update_placeholder(
-    editable_query: Query<&EditableText, Changed<EditableText>>,
-    mut placeholder_query: Query<(&PlaceholderTextFor, &mut Visibility), With<PlaceholderTextFor>>,
+fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, With<Camera3d>>) {
+    for mut transform in &mut query {
+        camera.update_world_coords();
+        transform.translation = transform.translation.lerp(
+            Vec3::new(
+                camera.world_coords.x,
+                camera.world_coords.y,
+                camera.world_coords.z,
+            ),
+            0.1,
+        );
+        transform.look_at(Vec3::ZERO, Vec3::Y);
+    }
+}
+
+fn movement(
+    button_input: Res<ButtonInput<MouseButton>>,
+    mut move_input: MessageReader<CursorMoved>,
+    mut camera: ResMut<Camera>,
 ) {
-    for (PlaceholderTextFor(input_entity), mut visibility) in &mut placeholder_query {
-        if let Ok(editable) = editable_query.get(*input_entity) {
-            *visibility = if editable.value().to_string().is_empty() {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
+    if button_input.pressed(MouseButton::Right) {
+        for message in move_input.read() {
+            if let Some(delta) = message.delta {
+                camera.move_camera(delta);
             }
         }
     }
 }
 
-fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
-    let mut cube = DEFAULT_CUBES;
-    let mut bombs = DEFAULT_BOMBS;
-    if let Some(game) = game {
-        cube = game.x;
-        bombs = game.bombs;
+fn scroll(
+    mut input: MessageReader<MouseWheel>,
+    mut game: ResMut<Game>,
+    mut cube_query: Query<(&mut Cube, &MeshMaterial3d<StandardMaterial>, &mut Pickable)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut camera: ResMut<Camera>,
+) {
+    let mut layer_changed = false;
+    for wheel in input.read() {
+        if wheel.y > 0.0 && game.current_layer < game.max_layer {
+            game.current_layer += 1;
+            layer_changed = true;
+        } else if wheel.y < 0.0 && game.current_layer > 0 {
+            game.current_layer -= 1;
+            layer_changed = true;
+        }
+        camera.scroll_camera((game.x - game.current_layer) * 2);
     }
 
-    commands.spawn(Camera2d);
+    if !layer_changed {
+        return;
+    }
+
+    for (mut cube, material, mut pickable) in &mut cube_query {
+        cube.is_selectable = cube.layer == game.current_layer;
+        let dim = cube.layer < game.current_layer;
+
+        if dim == cube.is_dimmed {
+            continue;
+        }
+
+        cube.is_dimmed = dim;
+
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            material.base_color.set_alpha(if dim { 0.1 } else { 1.0 });
+            material.alpha_mode = if dim {
+                AlphaMode::Blend
+            } else {
+                AlphaMode::Opaque
+            };
+        }
+        *pickable = if dim {
+            Pickable::IGNORE
+        } else {
+            Pickable::default()
+        };
+    }
+}
+
+fn spawn_cubes(
+    mut commands: Commands,
+    game: Res<Game>,
+    mut cube_spawner: ResMut<CubeSpawner>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut cube_index: ResMut<CubeIndex>,
+) {
+    let shared_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+
+    for _ in 0..CUBES_SPAWN_PER_FRAME {
+        if cube_spawner.spawned >= cube_spawner.to_spawn {
+            break;
+        }
+
+        let i = cube_spawner.spawned;
+        let cube_per_layer = game.x;
+
+        let row = i % cube_per_layer;
+        let height = (i / cube_per_layer) % cube_per_layer;
+        let depth = i / (cube_per_layer * cube_per_layer);
+
+        let pos_x = row as f32 - (game.x as f32 - 1.0) / 2.0;
+        let pos_y = height as f32 - (game.y as f32 - 1.0) / 2.0;
+        let pos_z = depth as f32 - (game.z as f32 - 1.0) / 2.0;
+        let layer = [
+            row,
+            game.x - 1 - row,
+            height,
+            game.y - 1 - height,
+            depth,
+            game.z - 1 - depth,
+        ]
+        .into_iter()
+        .min()
+        .unwrap();
+        let is_selectable = layer == 0;
+        let size = render_resource::Extent3d {
+            width: 256,
+            height: 256,
+            ..Default::default()
+        };
+        let mut image = Image::new_fill(
+            size,
+            render_resource::TextureDimension::D2,
+            &[0, 0, 0, 0],
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::default(),
+        );
+        image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
+            | TextureUsages::COPY_DST
+            | TextureUsages::RENDER_ATTACHMENT;
+        let image_handle = images.add(image);
+        let texture_camera = commands
+            .spawn((
+                Camera2d,
+                bevy::camera::Camera {
+                    order: -1,
+                    clear_color: ClearColorConfig::Custom(Color::NONE),
+                    ..Default::default()
+                },
+                RenderTarget::Image(image_handle.clone().into()),
+                DespawnOnExit(GameState::Playing),
+            ))
+            .id();
+        let cube_entity = commands.spawn_empty().id();
+        cube_index.0.insert((row, height, depth), cube_entity);
+        let is_white = (row + height + depth).is_multiple_of(2);
+        let bg_colour = if is_white {
+            Color::srgba(170. / 256., 215. / 256., 81. / 256., 1.)
+        } else {
+            Color::srgba(162. / 256., 209. / 256., 73. / 256., 1.)
+        };
+        commands
+            .spawn((
+                SurfaceBackground(cube_entity),
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..Default::default()
+                },
+                BackgroundColor(bg_colour),
+                UiTargetCamera(texture_camera),
+            ))
+            .with_children(|parent| {
+                parent.spawn((Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },));
+            })
+            .with_children(|parent| {
+                parent.spawn((
+                    SurfaceText(cube_entity),
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(50.0),
+                        ..Default::default()
+                    },
+                    TextColor::BLACK,
+                ));
+            });
+        let material_handle = materials.add(StandardMaterial {
+            base_color_texture: Some(image_handle),
+            reflectance: 0.0,
+            alpha_mode: AlphaMode::Opaque,
+            unlit: true,
+            ..Default::default()
+        });
+        commands
+            .entity(cube_entity)
+            .insert((
+                Cube {
+                    row,
+                    height,
+                    depth,
+                    layer,
+                    is_selectable,
+                    texture_camera,
+                    is_dimmed: false,
+                },
+                Pickable::default(),
+                Mesh3d(shared_mesh.clone()),
+                MeshMaterial3d(material_handle),
+                Transform::from_xyz(pos_x, pos_y, pos_z),
+            ))
+            .observe(
+                move |click: On<Pointer<Click>>,
+                      cube_query: Query<&Cube>,
+                      mut game: ResMut<Game>,
+                      mut cube_opener: ResMut<CubeOpener>| match click.button {
+                    PointerButton::Primary => {
+                        if let Ok(cube) = cube_query.get(click.entity)
+                            && cube.is_selectable
+                            && let Some(opened_blocks) =
+                                game.open(cube.row, cube.height, cube.depth)
+                        {
+                            cube_opener.to_open = opened_blocks;
+                            cube_opener.opened = 0;
+                        }
+                    }
+                    PointerButton::Secondary => {}
+                    PointerButton::Middle => {}
+                },
+            );
+        cube_spawner.spawned += 1;
+    }
+}
+
+fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
+    let mut cube = DEFAULT_CUBES;
+    if let Some(game) = game {
+        cube = game.x;
+    }
+
     let root = commands
         .spawn((
             MainMenuRoot,
             DespawnOnExit(GameState::Playing),
             Node {
                 width: Val::Px(200.),
-                height: Val::Px(100.),
+                height: Val::Px(50.),
                 justify_self: JustifySelf::Center,
                 align_self: AlignSelf::Center,
-                flex_direction: FlexDirection::Column,
                 border: UiRect::all(Val::Px(1.)),
                 ..Default::default()
             },
         ))
-        .id();
-    let top = commands
-        .spawn(Node {
-            height: Val::Percent(50.),
-            width: Val::Percent(100.),
-            ..Default::default()
-        })
-        .id();
-    let bottom = commands
-        .spawn(Node {
-            height: Val::Percent(50.),
-            width: Val::Percent(100.),
-            ..Default::default()
-        })
         .id();
     let cube_label_box = commands
         .spawn((
             Node {
                 height: Val::Percent(100.),
                 width: Val::Percent(75.),
+                align_items: AlignItems::Center,
+                padding: Val::Px(1.).all(),
                 border: Val::Px(2.).all(),
                 ..Default::default()
             },
@@ -211,493 +580,40 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
         .id();
     let cube_input = commands
         .spawn((
+            Node {
+                width: Val::Percent(25.),
+                height: Val::Percent(100.),
+                align_self: AlignSelf::Center,
+                align_content: AlignContent::Center,
+                align_items: AlignItems::Center,
+                border: Val::Px(2.).all(),
+                ..Default::default()
+            },
+            BackgroundColor(GREY.into()),
+            BorderColor::all(Color::WHITE),
+        ))
+        .id();
+    let mut a = EditableText::new(format!("{}", cube));
+    a.max_characters = Some(1);
+    a.visible_width = Some(10.);
+    a.allow_newlines = false;
+    let editable_text = commands
+        .spawn((
             CubeInput,
-            Node {
-                width: Val::Percent(25.),
-                height: Val::Percent(100.),
-                border: Val::Px(2.).all(),
-                ..Default::default()
-            },
-            EditableText {
-                visible_width: Some(10.),
-                allow_newlines: false,
-                max_characters: Some(1),
-                ..Default::default()
-            },
+            a,
             EditableTextFilter::new(|c| c.is_numeric()),
             TextLayout::no_wrap(),
-            TextFont {
-                font_size: FontSize::Px(20.),
-                ..Default::default()
-            },
-            TextColor(BLACK.into()),
+            TextColor(Color::BLACK),
             TextCursorStyle::default(),
-            BackgroundColor(GREY.into()),
-            BorderColor::all(Color::WHITE),
         ))
         .id();
-    let cube_placeholder = commands
-        .spawn((
-            PlaceholderTextFor(cube_input),
-            Name::new("cube"),
-            Text::new(cube.to_string()),
-            TextFont {
-                font_size: FontSize::Px(20.),
-                ..Default::default()
-            },
-            TextColor(Color::BLACK),
-        ))
-        .id();
-    let bomb_label_box = commands
-        .spawn((
-            Node {
-                height: Val::Percent(100.),
-                width: Val::Percent(75.),
-                border: Val::Px(2.).all(),
-                ..Default::default()
-            },
-            BackgroundColor(GREY.into()),
-            BorderColor::all(Color::WHITE),
-        ))
-        .id();
-    let bomb_label_text = commands
-        .spawn((
-            Text("Enter bombs:".into()),
-            TextFont {
-                font_size: FontSize::Px(20.),
-                ..Default::default()
-            },
-            TextColor(Color::BLACK),
-        ))
-        .id();
-    let bomb_input = commands
-        .spawn((
-            BombInput,
-            Node {
-                width: Val::Percent(25.),
-                height: Val::Percent(100.),
-                border: Val::Px(2.).all(),
-                ..Default::default()
-            },
-            EditableText {
-                visible_width: Some(10.),
-                allow_newlines: false,
-                max_characters: Some(1),
-                ..Default::default()
-            },
-            EditableTextFilter::new(|c| c.is_numeric()),
-            TextLayout::no_wrap(),
-            TextFont {
-                font_size: FontSize::Px(20.),
-                ..Default::default()
-            },
-            TextColor(BLACK.into()),
-            TextCursorStyle::default(),
-            BackgroundColor(GREY.into()),
-            BorderColor::all(Color::WHITE),
-        ))
-        .id();
-    let bomb_placeholder = commands
-        .spawn((
-            PlaceholderTextFor(bomb_input),
-            Name::new("bombs"),
-            Text::new(bombs.to_string()),
-            TextFont {
-                font_size: FontSize::Px(20.),
-                ..Default::default()
-            },
-            TextColor(Color::BLACK),
-        ))
-        .id();
-    let top_label = commands
+    let label = commands
         .entity(cube_label_box)
         .add_children(&[cube_label_text])
         .id();
-    let cube_input = commands
+    let input = commands
         .entity(cube_input)
-        .add_children(&[cube_placeholder])
+        .add_children(&[editable_text])
         .id();
-    let top = commands
-        .entity(top)
-        .add_children(&[top_label, cube_input])
-        .id();
-
-    let bottom_label = commands
-        .entity(bomb_label_box)
-        .add_children(&[bomb_label_text])
-        .id();
-    let bomb_input = commands
-        .entity(bomb_input)
-        .add_children(&[bomb_placeholder])
-        .id();
-    let bottom = commands
-        .entity(bottom)
-        .add_children(&[bottom_label, bomb_input])
-        .id();
-    commands.entity(root).add_children(&[top, bottom]);
-}
-
-fn text_submission(
-    mut commands: Commands,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut game_state: ResMut<NextState<GameState>>,
-    cube_input: Query<&EditableText, With<CubeInput>>,
-    bomb_input: Query<&EditableText, With<BombInput>>,
-    menu_root: Query<Entity, With<MainMenuRoot>>,
-    camera: Option<ResMut<Camera>>,
-) {
-    if let NextState::Pending(GameState::Playing) = game_state.as_ref() {
-        return;
-    }
-
-    if keyboard_input.just_pressed(KeyCode::Enter)
-        && let Ok(cube_input) = cube_input.single()
-        && let Ok(bomb_input) = bomb_input.single()
-    {
-        let cube_str = cube_input.value().to_string();
-        let cube_val = if cube_str.is_empty() {
-            DEFAULT_CUBES
-        } else {
-            cube_str.parse().unwrap()
-        };
-        let bombs_str = bomb_input.value().to_string();
-        let bombs_val = if bombs_str.is_empty() {
-            DEFAULT_BOMBS
-        } else {
-            bombs_str.parse().unwrap()
-        };
-        let game = Game::new(cube_val, cube_val, cube_val, bombs_val);
-
-        commands.insert_resource(game);
-        match camera {
-            Some(mut camera) => {
-                camera.scroll_camera(cube_val * 2);
-            }
-            None => {
-                let camera = Camera::new(&cube_val);
-                commands.spawn((
-                    Camera3d::default(),
-                    Transform::from_xyz(
-                        camera.world_coords.x,
-                        camera.world_coords.y,
-                        camera.world_coords.z,
-                    )
-                    .looking_at(Vec3::ZERO, Vec3::Y),
-                    camera,
-                ));
-            }
-        }
-
-        for entity in &menu_root {
-            commands.entity(entity).despawn();
-        }
-
-        game_state.set(GameState::Playing);
-    }
-}
-
-fn update_camera(mut camera: ResMut<Camera>, mut query: Query<&mut Transform, With<Camera3d>>) {
-    for mut transform in &mut query {
-        camera.update_world_coords();
-        transform.translation = transform.translation.lerp(
-            Vec3::new(
-                camera.world_coords.x,
-                camera.world_coords.y,
-                camera.world_coords.z,
-            ),
-            0.1,
-        );
-        transform.look_at(Vec3::ZERO, Vec3::Y);
-    }
-}
-
-// fn setup_highlight_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
-//     let (hover_config, _) = config_store.config_mut::<HoverGizmos>();
-//     hover_config.depth_bias = -1.0;
-//     let (selectable_config, _) = config_store.config_mut::<SelectableGizmos>();
-//     selectable_config.depth_bias = -0.5;
-//     let (not_selectable_config, _) = config_store.config_mut::<NotSelectableGizmos>();
-//     not_selectable_config.depth_bias = -0.1;
-// }
-//
-// fn draw_cube_edges(
-//     // mut gizmos: Gizmos,
-//     mut hover_gizmos: Gizmos<HoverGizmos>,
-//     mut selectable_gizmos: Gizmos<SelectableGizmos>,
-//     mut not_selectable_gizmos: Gizmos<NotSelectableGizmos>,
-//     query: Query<(&Cube, &Transform)>,
-//     game: Res<Game>,
-// ) {
-//     for (cube, transform) in &query {
-//         let block = game.get_block(cube.row, cube.height, cube.depth).unwrap();
-//         if cube.is_hovered {
-//             hover_gizmos.cube(*transform, Color::srgb(0.9, 0.9, 0.9));
-//         }
-//         if cube.is_selected || cube.is_opened || block.is_revealed {
-//             selectable_gizmos.cube(*transform, Color::WHITE);
-//         } else {
-//             if !cube.is_selectable || block.is_bomb {
-//                 not_selectable_gizmos.cube(*transform, Color::srgb(1.0, 0.0, 0.0));
-//             } else {
-//                 selectable_gizmos.cube(*transform, Color::srgb(0.0, 1.0, 0.0));
-//             }
-//         }
-//     }
-// }
-
-fn movement(
-    button_input: Res<ButtonInput<MouseButton>>,
-    mut move_input: MessageReader<CursorMoved>,
-    mut camera: ResMut<Camera>,
-) {
-    if button_input.pressed(MouseButton::Right) {
-        for message in move_input.read() {
-            if let Some(delta) = message.delta {
-                camera.move_camera(delta);
-            }
-        }
-    }
-}
-
-fn scroll(
-    mut input: MessageReader<MouseWheel>,
-    mut game: ResMut<Game>,
-    mut cube_query: Query<(
-        Entity,
-        &mut Cube,
-        &MeshMaterial3d<StandardMaterial>,
-        &mut Pickable,
-    )>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut bg_query: Query<(&SurfaceBackground, &mut BackgroundColor)>,
-    mut camera: ResMut<Camera>,
-) {
-    let mut layer_changed = false;
-    for wheel in input.read() {
-        if wheel.y > 0.0 && game.current_layer < game.max_layer {
-            game.current_layer += 1;
-            layer_changed = true;
-        } else if wheel.y < 0.0 && game.current_layer > 0 {
-            game.current_layer -= 1;
-            layer_changed = true;
-        }
-        camera.scroll_camera((game.x - game.current_layer) * 2);
-    }
-
-    if !layer_changed {
-        return;
-    }
-
-    let mut dim_state: HashMap<Entity, bool> = HashMap::new();
-
-    for (entity, mut cube, material, mut pickable) in &mut cube_query {
-        cube.is_selectable = cube.layer == game.current_layer;
-        let dim = cube.layer < game.current_layer;
-        dim_state.insert(entity, dim);
-        if let Some(mut material) = materials.get_mut(&material.0) {
-            material.base_color.set_alpha(if dim { 0.1 } else { 1.0 });
-            material.alpha_mode = if dim {
-                AlphaMode::Blend
-            } else {
-                AlphaMode::Opaque
-            };
-        }
-        *pickable = if dim {
-            Pickable::IGNORE
-        } else {
-            Pickable::default()
-        };
-    }
-    for (SurfaceBackground(cube_entity), mut bg_colour) in &mut bg_query {
-        if let Some(&dim) = dim_state.get(cube_entity) {
-            bg_colour.0.set_alpha(if dim { 0.1 } else { 1.0 });
-        }
-    }
-}
-
-fn spawn_scene(
-    mut commands: Commands,
-    game: Res<Game>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut cube_index: ResMut<CubeIndex>,
-) {
-    let shared_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    for depth in 0..game.z {
-        for height in 0..game.y {
-            for row in 0..game.x {
-                let pos_x = row as f32 - (game.x as f32 - 1.0) / 2.0;
-                let pos_y = height as f32 - (game.y as f32 - 1.0) / 2.0;
-                let pos_z = depth as f32 - (game.z as f32 - 1.0) / 2.0;
-                let layer = [
-                    row,
-                    game.x - 1 - row,
-                    height,
-                    game.y - 1 - height,
-                    depth,
-                    game.z - 1 - depth,
-                ]
-                .into_iter()
-                .min()
-                .unwrap();
-                let is_selectable = layer == 0;
-                let size = render_resource::Extent3d {
-                    width: 256,
-                    height: 256,
-                    ..Default::default()
-                };
-                let mut image = Image::new_fill(
-                    size,
-                    render_resource::TextureDimension::D2,
-                    &[0, 0, 0, 0],
-                    TextureFormat::Bgra8UnormSrgb,
-                    RenderAssetUsages::default(),
-                );
-                image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::COPY_DST
-                    | TextureUsages::RENDER_ATTACHMENT;
-                let image_handle = images.add(image);
-                let texture_camera = commands
-                    .spawn((
-                        Camera2d,
-                        bevy::camera::Camera {
-                            order: -1,
-                            ..Default::default()
-                        },
-                        RenderTarget::Image(image_handle.clone().into()),
-                        DespawnOnExit(GameState::Playing),
-                    ))
-                    .id();
-                let cube_entity = commands.spawn_empty().id();
-                cube_index.0.insert((row, height, depth), cube_entity);
-                let is_white = (row + height + depth) % 2 == 0;
-                let bg_colour = if is_white {
-                    Color::srgb(170.0 / 256.0, 215.0 / 256.0, 81.0 / 256.0)
-                } else {
-                    Color::srgb(162.0 / 256.0, 209.0 / 256.0, 73.0 / 256.0)
-                };
-                commands
-                    .spawn((
-                        SurfaceBackground(cube_entity),
-                        Node {
-                            width: percent(100),
-                            height: percent(100),
-                            flex_direction: FlexDirection::Column,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..Default::default()
-                        },
-                        BackgroundColor(bg_colour),
-                        UiTargetCamera(texture_camera),
-                    ))
-                    .with_children(|parent| {
-                        parent.spawn((Node {
-                            position_type: PositionType::Absolute,
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },));
-                    })
-                    .with_children(|parent| {
-                        parent.spawn((
-                            SurfaceText(cube_entity),
-                            Text::new(""),
-                            TextFont {
-                                font_size: FontSize::Px(50.0),
-                                ..Default::default()
-                            },
-                            TextColor::BLACK,
-                        ));
-                    });
-                let material_handle = materials.add(StandardMaterial {
-                    base_color_texture: Some(image_handle),
-                    reflectance: 0.0,
-                    alpha_mode: AlphaMode::Opaque,
-                    unlit: true,
-                    ..Default::default()
-                });
-                commands
-                    .entity(cube_entity)
-                    .insert((
-                        Cube {
-                            row,
-                            height,
-                            depth,
-                            layer,
-                            is_selectable,
-                            texture_camera,
-                        },
-                        Pickable::default(),
-                        Mesh3d(shared_mesh.clone()),
-                        MeshMaterial3d(material_handle),
-                        Transform::from_xyz(pos_x, pos_y, pos_z),
-                        DespawnOnExit(GameState::Playing),
-                    ))
-                    .observe(
-                        move |click: On<Pointer<Click>>,
-                              cube_query: Query<(&Cube, &MeshMaterial3d<StandardMaterial>)>,
-                              mut text_query: Query<(&mut Text, &SurfaceText)>,
-                              mut game: ResMut<Game>,
-                              mut materials: ResMut<Assets<StandardMaterial>>,
-                              mut game_state: ResMut<NextState<GameState>>,
-                              cube_index: Res<CubeIndex>| {
-                            match click.button {
-                                PointerButton::Primary => {
-                                    if let Ok((cube, _)) = cube_query.get(click.entity)
-                                        && cube.is_selectable
-                                        && let Some(opened_blocks) =
-                                            game.open(cube.row, cube.height, cube.depth)
-                                    {
-                                        for (x, y, z) in opened_blocks {
-                                            if let Some(&entity) = cube_index.0.get(&(x, y, z))
-                                                && let Ok((_, material)) = cube_query.get(entity)
-                                                && let Some(mut mat) =
-                                                    materials.get_mut(&material.0)
-                                                && let Some(block) = game.get_block(x, y, z)
-                                            {
-                                                if block.is_bomb {
-                                                    mat.base_color = Color::Srgba(Srgba::rgba_u8(
-                                                        200,
-                                                        100,
-                                                        100,
-                                                        u8::MAX,
-                                                    ));
-                                                    game_state.set(GameState::MainMenu);
-                                                } else {
-                                                    mat.base_color = Color::Srgba(Srgba::rgba_u8(
-                                                        100,
-                                                        200,
-                                                        100,
-                                                        u8::MAX,
-                                                    ));
-                                                    for (mut text, SurfaceText(text_cube_entity)) in
-                                                        &mut text_query
-                                                    {
-                                                        if *text_cube_entity == entity {
-                                                            text.0 =
-                                                                format!("{}", block.nearby_bombs);
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                PointerButton::Secondary => {}
-                                PointerButton::Middle => {}
-                            }
-                        },
-                    );
-            }
-        }
-    }
-    commands.spawn((
-        PointLight {
-            ..Default::default()
-        },
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
+    commands.entity(root).add_children(&[label, input]);
 }

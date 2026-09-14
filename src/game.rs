@@ -133,24 +133,25 @@ impl Game {
         }
         if let Some(block) = self.get_block_mut(x, y, z) {
             if block.is_revealed {
-                // info!("already opened, {} is bomb", block.is_bomb);
                 return None;
             }
+
             let mut opened_blocks = Vec::<(usize, usize, usize)>::new();
-            // info!("opened, {} bombs, {} is bomb", block.nearby_bombs, block.is_bomb);
             block.is_revealed = true;
+
             let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
             queue.push_back((x, y, z));
 
             while !queue.is_empty() {
                 let (x, y, z) = queue.pop_front().unwrap();
                 if let Some(block) = self.get_block_mut(x, y, z) {
-                    // info!("opening!, {} bomb?", block.is_bomb);
+
                     block.is_revealed = true;
                     opened_blocks.push((x, y, z));
                     if block.nearby_bombs > 0 {
                         continue;
                     }
+
                     for (dx, dy, dz) in Self::OFFSETS {
                         if let Some(neighbour) = self.get_offset_position(x, y, z, dx, dy, dz)
                             && let Some(block) =
@@ -210,7 +211,4 @@ impl Game {
         }
         true
     }
-    // pub fn get_centre_cube(&self) -> Block {
-    //     self.map[self.z / 2][self.y / 2][self.x / 2]
-    // }
 }

@@ -1,12 +1,15 @@
 use bevy::{
+    color::Color,
     ecs::{
+        component::Component,
         entity::Entity,
         query::With,
         system::{Commands, Query, Res, ResMut, SystemParam},
     },
     input::{ButtonInput, keyboard::KeyCode},
     state::state::NextState,
-    text::EditableText,
+    text::{EditableText, FontSize, TextColor, TextFont},
+    ui::{BorderColor, Node, Val, widget::Text},
 };
 
 use crate::{
@@ -16,10 +19,32 @@ use crate::{
     game::Game,
 };
 
+#[derive(Component)]
+pub struct BombDisplay;
+
 #[derive(SystemParam)]
 pub struct MenuInput<'w, 's> {
     cube_input: Query<'w, 's, &'static EditableText, With<CubeInput>>,
     menu_root: Query<'w, 's, Entity, With<MainMenuRoot>>,
+}
+
+pub fn bomb_display(mut commands: Commands, game: Res<Game>) {
+    commands.spawn((
+        BombDisplay,
+        Node {
+            height: Val::Px(50.),
+            width: Val::Px(125.),
+            justify_self: bevy::ui::JustifySelf::End,
+            align_self: bevy::ui::AlignSelf::Start,
+            ..Default::default()
+        },
+        Text::new(format!("Bombs: {}", game.bombs)),
+        TextFont {
+            font_size: FontSize::Px(25.0),
+            ..Default::default()
+        },
+        TextColor::WHITE,
+    ));
 }
 
 pub fn text_submission(

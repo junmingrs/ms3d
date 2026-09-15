@@ -31,4 +31,5 @@ pub struct Cube {
     pub layer: usize,
     pub texture_camera: Entity,
     pub is_dimmed: bool,
+    pub is_flagged: bool,
 }

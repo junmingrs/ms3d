@@ -15,7 +15,7 @@ use crate::{
     camera::Camera,
     cube::{Cube, CubeOpener, CubeSpawner},
     game::Game,
-    ui::text_submission,
+    ui::{bomb_display, text_submission},
 };
 
 mod camera;
@@ -26,6 +26,21 @@ mod ui;
 const DEFAULT_CUBES: usize = 3;
 const CUBES_SPAWN_PER_FRAME: usize = 5;
 const CUBES_OPEN_PER_FRAME: usize = 100;
+
+struct GameColours;
+
+impl GameColours {
+    const DEFAULT_LIGHT: Color =
+        Color::Srgba(Srgba::new(146. / 256., 177. / 256., 81. / 256., 256.));
+    const DEFAULT_DARK: Color =
+        Color::Srgba(Srgba::new(140. / 256., 171. / 256., 75. / 256., 256.));
+    const REVEALED_LIGHT: Color =
+        Color::Srgba(Srgba::new(110. / 256., 148. / 256., 39. / 256., 256.));
+    const REVEALED_DARK: Color =
+        Color::Srgba(Srgba::new(104. / 256., 142. / 256., 33. / 256., 256.));
+    const FLAGGED: Color = Color::Srgba(Srgba::new(200. / 256., 200. / 256., 35. / 256., 256.));
+    const BOMB: Color = Color::Srgba(Srgba::new(250. / 256., 144. / 256., 80. / 256., 256.));
+}
 
 #[derive(Resource, Default)]
 struct CubeIndex(HashMap<(usize, usize, usize), Entity>);
@@ -78,7 +93,12 @@ fn main() {
         .init_resource::<CubeIndex>()
         .add_systems(
             Startup,
-            (spawn_light, spawn_camera3d, warmup_pipeline).chain(),
+            (
+                spawn_light,
+                spawn_camera3d,
+                warmup_pipeline,
+            )
+                .chain(),
         )
         .add_systems(OnEnter(GameState::MainMenu), main_menu)
         .add_systems(
@@ -94,28 +114,34 @@ fn main() {
         )
         .add_systems(
             Update,
-            open_cubes.run_if(
+            update_cubes.run_if(
                 in_state(GameState::Playing)
                     .and_then(|opener: Res<CubeOpener>| opener.opened < opener.to_open.len()),
             ),
         )
         .add_systems(
             Update,
-            (scroll, movement, update_camera, manage_texture_cameras)
+            (
+                bomb_display,
+                scroll,
+                movement,
+                update_camera,
+                manage_texture_cameras,
+            )
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
         .run();
 }
 
-fn open_cubes(
+fn update_cubes(
     game: Res<Game>,
     mut game_state: ResMut<NextState<GameState>>,
     mut cube_opener: ResMut<CubeOpener>,
     cube_index: Res<CubeIndex>,
     mut text_query: Query<(&mut Text, &SurfaceText)>,
-    material_query: Query<&MeshMaterial3d<StandardMaterial>, With<Cube>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bg_query: Query<(&SurfaceBackground, &mut BackgroundColor)>,
+    cube_query: Query<&Cube>,
 ) {
     for _ in 0..CUBES_OPEN_PER_FRAME {
         if cube_opener.opened >= cube_opener.to_open.len() {
@@ -123,28 +149,49 @@ fn open_cubes(
             cube_opener.opened = 0;
             break;
         }
+        info!("this gets fired");
 
         let (x, y, z) = cube_opener.to_open[cube_opener.opened];
         if let Some(&entity) = cube_index.0.get(&(x, y, z))
-            && let Ok(mesh) = material_query.get(entity)
-            && let Some(mut mat) = materials.get_mut(&mesh.0)
             && let Some(block) = game.get_block(x, y, z)
+            && let Ok(cube) = cube_query.get(entity)
         {
-            if block.is_bomb {
-                mat.base_color = Color::Srgba(Srgba::rgba_u8(200, 100, 100, u8::MAX));
-                game_state.set(GameState::MainMenu);
-            } else {
-                mat.base_color = Color::Srgba(Srgba::rgba_u8(100, 200, 100, u8::MAX));
-                for (mut text, SurfaceText(text_cube_entity)) in &mut text_query {
-                    if *text_cube_entity == entity {
-                        text.0 = format!("{}", block.nearby_bombs);
-                        break;
+            for (SurfaceBackground(bg_entity), mut bg_colour) in &mut bg_query {
+                if entity == *bg_entity {
+                    let is_white = (x + y + z).is_multiple_of(2);
+                    if block.is_bomb && block.is_revealed {
+                        bg_colour.0 = GameColours::BOMB;
+                        game_state.set(GameState::MainMenu);
+                    } else if cube.is_flagged {
+                        bg_colour.0 = GameColours::FLAGGED;
+                    } else if block.is_revealed {
+                        bg_colour.0 = if is_white {
+                            GameColours::REVEALED_LIGHT
+                        } else {
+                            GameColours::REVEALED_DARK
+                        };
+                        for (mut text, SurfaceText(text_cube_entity)) in &mut text_query {
+                            if *text_cube_entity == entity {
+                                text.0 = format!("{}", block.nearby_bombs);
+                                break;
+                            }
+                        }
+                    } else {
+                        bg_colour.0 = if is_white {
+                            GameColours::DEFAULT_LIGHT
+                        } else {
+                            GameColours::DEFAULT_DARK
+                        };
                     }
                 }
             }
-        }
+        };
 
         cube_opener.opened += 1;
+    }
+    let win = game.check_win();
+    if win {
+        game_state.set(GameState::MainMenu);
     }
 }
 
@@ -342,7 +389,7 @@ fn scroll(
             game.current_layer -= 1;
             layer_changed = true;
         }
-        camera.scroll_camera((game.x - game.current_layer) * 2);
+        camera.scroll_camera((game.x - game.current_layer) * 3);
     }
 
     if !layer_changed {
@@ -445,9 +492,9 @@ fn spawn_cubes(
         cube_index.0.insert((row, height, depth), cube_entity);
         let is_white = (row + height + depth).is_multiple_of(2);
         let bg_colour = if is_white {
-            Color::srgba(170. / 256., 215. / 256., 81. / 256., 1.)
+            GameColours::DEFAULT_LIGHT
         } else {
-            Color::srgba(162. / 256., 209. / 256., 73. / 256., 1.)
+            GameColours::DEFAULT_DARK
         };
         commands
             .spawn((
@@ -501,6 +548,7 @@ fn spawn_cubes(
                     is_selectable,
                     texture_camera,
                     is_dimmed: false,
+                    is_flagged: false,
                 },
                 Pickable::default(),
                 Mesh3d(shared_mesh.clone()),
@@ -509,12 +557,13 @@ fn spawn_cubes(
             ))
             .observe(
                 move |click: On<Pointer<Click>>,
-                      cube_query: Query<&Cube>,
+                      mut cube_query: Query<&mut Cube>,
                       mut game: ResMut<Game>,
                       mut cube_opener: ResMut<CubeOpener>| match click.button {
                     PointerButton::Primary => {
                         if let Ok(cube) = cube_query.get(click.entity)
                             && cube.is_selectable
+                            && !cube.is_flagged
                             && let Some(opened_blocks) =
                                 game.open(cube.row, cube.height, cube.depth)
                         {
@@ -523,7 +572,17 @@ fn spawn_cubes(
                         }
                     }
                     PointerButton::Secondary => {}
-                    PointerButton::Middle => {}
+                    PointerButton::Middle => {
+                        if let Ok(mut cube) = cube_query.get_mut(click.entity)
+                            && let Some(block) = game.get_block(cube.row, cube.height, cube.depth)
+                            && !block.is_revealed
+                        {
+                            cube.is_flagged = !cube.is_flagged;
+                            cube_opener
+                                .to_open
+                                .push((cube.row, cube.height, cube.depth));
+                        }
+                    }
                 },
             );
         cube_spawner.spawned += 1;

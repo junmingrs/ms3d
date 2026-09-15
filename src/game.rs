@@ -22,6 +22,7 @@ pub struct Game {
     pub current_layer: usize,
     pub max_layer: usize,
     is_opened: bool,
+    opened_blocks: usize,
 }
 
 impl Game {
@@ -85,25 +86,22 @@ impl Game {
             current_layer: 0,
             max_layer,
             is_opened: false,
+            opened_blocks: 0,
         }
     }
 
     pub fn generate_bombs(&mut self, x: usize, y: usize, z: usize) {
         let mut bomb_positions: Vec<(usize, usize, usize)> = Vec::new();
-        let mut remaining_bombless = self.x * self.y * self.z - 1;
 
-        for depth in self.map.iter() {
-            for height in depth {
-                for row in height {
-                    if bomb_positions.len() < self.bombs && (row.x, row.y, row.z) != (x, y, z) {
-                        let is_bomb = rand::random_bool(
-                            self.bombs as f64 / remaining_bombless as f64,
-                        );
-                        remaining_bombless -= 1;
-                        if is_bomb {
-                            bomb_positions.push((row.x, row.y, row.z));
-                        }
-                    }
+        for _ in 0..self.bombs {
+            let mut bombed = false;
+            while !bombed {
+                let pos_x: usize = rand::random_range(0..self.x);
+                let pos_y: usize = rand::random_range(0..self.x);
+                let pos_z: usize = rand::random_range(0..self.x);
+                if !(pos_x == x && pos_y == y && pos_z == z) {
+                    bomb_positions.push((pos_x, pos_y, pos_z));
+                    bombed = true;
                 }
             }
         }
@@ -126,6 +124,10 @@ impl Game {
         }
     }
 
+    pub fn check_win(&self) -> bool {
+        self.opened_blocks == self.x.pow(3) - self.bombs
+    }
+
     pub fn open(&mut self, x: usize, y: usize, z: usize) -> Option<Vec<(usize, usize, usize)>> {
         if !self.is_opened {
             self.is_opened = true;
@@ -145,7 +147,6 @@ impl Game {
             while !queue.is_empty() {
                 let (x, y, z) = queue.pop_front().unwrap();
                 if let Some(block) = self.get_block_mut(x, y, z) {
-
                     block.is_revealed = true;
                     opened_blocks.push((x, y, z));
                     if block.nearby_bombs > 0 {
@@ -164,6 +165,7 @@ impl Game {
                     }
                 }
             }
+            self.opened_blocks += opened_blocks.len();
             return Some(opened_blocks);
         }
         None

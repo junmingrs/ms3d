@@ -1,5 +1,4 @@
 use bevy::{
-    color::Color,
     ecs::{
         component::Component,
         entity::Entity,
@@ -7,9 +6,9 @@ use bevy::{
         system::{Commands, Query, Res, ResMut, SystemParam},
     },
     input::{ButtonInput, keyboard::KeyCode},
-    state::state::NextState,
+    state::{state::NextState, state_scoped::DespawnOnExit},
     text::{EditableText, FontSize, TextColor, TextFont},
-    ui::{BorderColor, Node, Val, widget::Text},
+    ui::{Node, Val, widget::Text},
 };
 
 use crate::{
@@ -33,7 +32,7 @@ pub fn bomb_display(mut commands: Commands, game: Res<Game>) {
         BombDisplay,
         Node {
             height: Val::Px(50.),
-            width: Val::Px(125.),
+            width: Val::Px(200.),
             justify_self: bevy::ui::JustifySelf::End,
             align_self: bevy::ui::AlignSelf::Start,
             ..Default::default()
@@ -44,6 +43,7 @@ pub fn bomb_display(mut commands: Commands, game: Res<Game>) {
             ..Default::default()
         },
         TextColor::WHITE,
+        DespawnOnExit(GameState::GameEnd),
     ));
 }
 

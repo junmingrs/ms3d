@@ -4,9 +4,6 @@ use bevy::ecs::resource::Resource;
 
 #[derive(Clone, Copy)]
 pub struct Block {
-    x: usize,
-    y: usize,
-    z: usize,
     pub is_bomb: bool,
     pub nearby_bombs: usize,
     pub is_revealed: bool,
@@ -58,15 +55,12 @@ impl Game {
     pub fn new(x: usize, y: usize, z: usize, bombs: usize) -> Self {
         let mut map: Vec<Vec<Vec<Block>>> = Vec::new();
         let max_layer = [x, y, z].into_iter().min().unwrap().saturating_sub(1) / 2;
-        for depth in 0..z {
+        for _ in 0..z {
             let mut layer = Vec::new();
-            for height in 0..y {
+            for _ in 0..y {
                 let mut row = Vec::new();
-                for width in 0..z {
+                for _ in 0..z {
                     row.push(Block {
-                        x: width,
-                        y: height,
-                        z: depth,
                         is_bomb: false,
                         nearby_bombs: 0,
                         is_revealed: false,

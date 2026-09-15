@@ -57,12 +57,16 @@ struct MainMenuRoot;
 #[derive(Component)]
 struct CubeInput;
 
+#[derive(Resource)]
+struct CubeMesh(Handle<Mesh>);
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
 enum GameState {
     #[default]
     Loading,
     MainMenu,
     Playing,
+    GameEnd,
 }
 
 fn main() {
@@ -93,18 +97,15 @@ fn main() {
         .init_resource::<CubeIndex>()
         .add_systems(
             Startup,
-            (
-                spawn_light,
-                spawn_camera3d,
-                warmup_pipeline,
-            )
-                .chain(),
+            (spawn_light, spawn_camera3d, setup_mesh, warmup_pipeline).chain(),
         )
         .add_systems(OnEnter(GameState::MainMenu), main_menu)
+        .add_systems(OnEnter(GameState::GameEnd), main_menu)
         .add_systems(
             Update,
             text_submission.run_if(in_state(GameState::MainMenu)),
         )
+        .add_systems(Update, text_submission.run_if(in_state(GameState::GameEnd)))
         .add_systems(
             Update,
             spawn_cubes.run_if(
@@ -119,10 +120,10 @@ fn main() {
                     .and_then(|opener: Res<CubeOpener>| opener.opened < opener.to_open.len()),
             ),
         )
+        .add_systems(OnEnter(GameState::Playing), bomb_display)
         .add_systems(
             Update,
             (
-                bomb_display,
                 scroll,
                 movement,
                 update_camera,
@@ -132,6 +133,10 @@ fn main() {
                 .run_if(in_state(GameState::Playing)),
         )
         .run();
+}
+
+fn setup_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    commands.insert_resource(CubeMesh(meshes.add(Cuboid::new(1., 1., 1.))));
 }
 
 fn update_cubes(
@@ -149,7 +154,6 @@ fn update_cubes(
             cube_opener.opened = 0;
             break;
         }
-        info!("this gets fired");
 
         let (x, y, z) = cube_opener.to_open[cube_opener.opened];
         if let Some(&entity) = cube_index.0.get(&(x, y, z))
@@ -161,7 +165,7 @@ fn update_cubes(
                     let is_white = (x + y + z).is_multiple_of(2);
                     if block.is_bomb && block.is_revealed {
                         bg_colour.0 = GameColours::BOMB;
-                        game_state.set(GameState::MainMenu);
+                        game_state.set(GameState::GameEnd);
                     } else if cube.is_flagged {
                         bg_colour.0 = GameColours::FLAGGED;
                     } else if block.is_revealed {
@@ -191,7 +195,7 @@ fn update_cubes(
     }
     let win = game.check_win();
     if win {
-        game_state.set(GameState::MainMenu);
+        game_state.set(GameState::GameEnd);
     }
 }
 
@@ -426,13 +430,11 @@ fn spawn_cubes(
     mut commands: Commands,
     game: Res<Game>,
     mut cube_spawner: ResMut<CubeSpawner>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    cube_mesh: Res<CubeMesh>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut cube_index: ResMut<CubeIndex>,
 ) {
-    let shared_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-
     for _ in 0..CUBES_SPAWN_PER_FRAME {
         if cube_spawner.spawned >= cube_spawner.to_spawn {
             break;
@@ -485,7 +487,7 @@ fn spawn_cubes(
                     ..Default::default()
                 },
                 RenderTarget::Image(image_handle.clone().into()),
-                DespawnOnExit(GameState::Playing),
+                DespawnOnExit(GameState::GameEnd),
             ))
             .id();
         let cube_entity = commands.spawn_empty().id();
@@ -551,9 +553,10 @@ fn spawn_cubes(
                     is_flagged: false,
                 },
                 Pickable::default(),
-                Mesh3d(shared_mesh.clone()),
+                Mesh3d(cube_mesh.0.clone()),
                 MeshMaterial3d(material_handle),
                 Transform::from_xyz(pos_x, pos_y, pos_z),
+                DespawnOnExit(GameState::GameEnd),
             ))
             .observe(
                 move |click: On<Pointer<Click>>,

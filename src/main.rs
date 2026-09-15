@@ -45,6 +45,9 @@ impl GameColours {
 #[derive(Resource, Default)]
 struct CubeIndex(HashMap<(usize, usize, usize), Entity>);
 
+#[derive(Resource, Default)]
+struct InitialRender(HashSet<Entity>);
+
 #[derive(Component)]
 struct SurfaceText(Entity);
 
@@ -123,12 +126,7 @@ fn main() {
         .add_systems(OnEnter(GameState::Playing), bomb_display)
         .add_systems(
             Update,
-            (
-                scroll,
-                movement,
-                update_camera,
-                manage_texture_cameras,
-            )
+            (scroll, movement, update_camera, manage_texture_cameras)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
@@ -233,6 +231,7 @@ fn warmup_pipeline(
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
         MeshMaterial3d(material.clone()),
         Transform::from_xyz(0.0, -10000.0, 0.0),
+        DespawnOnExit(GameState::MainMenu),
     ));
 
     let blend_material = materials.add(StandardMaterial {
@@ -244,6 +243,7 @@ fn warmup_pipeline(
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
         MeshMaterial3d(blend_material),
         Transform::from_xyz(0.0, -10000.0, 0.0),
+        DespawnOnExit(GameState::MainMenu),
     ));
 
     let warm_size = render_resource::Extent3d {
@@ -271,6 +271,7 @@ fn warmup_pipeline(
                 ..Default::default()
             },
             RenderTarget::Image(warm_image_handle.into()),
+            DespawnOnExit(GameState::MainMenu),
         ))
         .id();
 
@@ -285,6 +286,7 @@ fn warmup_pipeline(
             },
             BackgroundColor(Color::WHITE),
             UiTargetCamera(warm_camera),
+            DespawnOnExit(GameState::MainMenu),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -294,6 +296,7 @@ fn warmup_pipeline(
                     ..Default::default()
                 },
                 TextColor::BLACK,
+                DespawnOnExit(GameState::MainMenu),
             ));
         });
 
@@ -324,7 +327,7 @@ fn spawn_light(mut commands: Commands) {
 }
 
 fn manage_texture_cameras(
-    mut initial_render_done: Local<HashSet<Entity>>,
+    mut initial_render_done: ResMut<InitialRender>,
     cube_query: Query<(Entity, &Cube)>,
     text_query: Query<&SurfaceText, Changed<Text>>,
     bg_query: Query<&SurfaceBackground, Changed<BackgroundColor>>,
@@ -339,7 +342,7 @@ fn manage_texture_cameras(
     }
 
     for (cube_entity, cube) in &cube_query {
-        let first_time = initial_render_done.insert(cube_entity); // true if newly inserted
+        let first_time = initial_render_done.0.insert(cube_entity); // true if newly inserted
         let should_render = first_time || needs_render.contains(&cube_entity);
 
         if let Ok(mut camera) = camera_query.get_mut(cube.texture_camera) {
@@ -511,15 +514,19 @@ fn spawn_cubes(
                 },
                 BackgroundColor(bg_colour),
                 UiTargetCamera(texture_camera),
+                DespawnOnExit(GameState::GameEnd),
             ))
             .with_children(|parent| {
-                parent.spawn((Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    align_items: AlignItems::Center,
-                    ..default()
-                },));
+                parent.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    DespawnOnExit(GameState::GameEnd),
+                ));
             })
             .with_children(|parent| {
                 parent.spawn((
@@ -530,6 +537,7 @@ fn spawn_cubes(
                         ..Default::default()
                     },
                     TextColor::BLACK,
+                    DespawnOnExit(GameState::GameEnd),
                 ));
             });
         let material_handle = materials.add(StandardMaterial {
@@ -601,7 +609,6 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
     let root = commands
         .spawn((
             MainMenuRoot,
-            DespawnOnExit(GameState::Playing),
             Node {
                 width: Val::Px(200.),
                 height: Val::Px(50.),
@@ -610,6 +617,7 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
                 border: UiRect::all(Val::Px(1.)),
                 ..Default::default()
             },
+            DespawnOnExit(GameState::Playing),
         ))
         .id();
     let cube_label_box = commands
@@ -624,6 +632,7 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
             },
             BackgroundColor(GREY.into()),
             BorderColor::all(Color::WHITE),
+            DespawnOnExit(GameState::Playing),
         ))
         .id();
     let cube_label_text = commands
@@ -634,9 +643,10 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
                 ..Default::default()
             },
             TextColor(Color::BLACK),
+            DespawnOnExit(GameState::Playing),
         ))
         .id();
-    let cube_input = commands
+    let cube_input_box = commands
         .spawn((
             Node {
                 width: Val::Percent(25.),
@@ -649,20 +659,22 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
             },
             BackgroundColor(GREY.into()),
             BorderColor::all(Color::WHITE),
+            DespawnOnExit(GameState::Playing),
         ))
         .id();
-    let mut a = EditableText::new(format!("{}", cube));
-    a.max_characters = Some(1);
-    a.visible_width = Some(10.);
-    a.allow_newlines = false;
-    let editable_text = commands
+    let mut editable_text = EditableText::new(format!("{}", cube));
+    editable_text.max_characters = Some(1);
+    editable_text.visible_width = Some(10.);
+    editable_text.allow_newlines = false;
+    let cube_input = commands
         .spawn((
             CubeInput,
-            a,
+            editable_text,
             EditableTextFilter::new(|c| c.is_numeric()),
             TextLayout::no_wrap(),
             TextColor(Color::BLACK),
             TextCursorStyle::default(),
+            DespawnOnExit(GameState::Playing),
         ))
         .id();
     let label = commands
@@ -670,8 +682,8 @@ fn main_menu(mut commands: Commands, game: Option<Res<Game>>) {
         .add_children(&[cube_label_text])
         .id();
     let input = commands
-        .entity(cube_input)
-        .add_children(&[editable_text])
+        .entity(cube_input_box)
+        .add_children(&[cube_input])
         .id();
     commands.entity(root).add_children(&[label, input]);
 }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::{
     ecs::{
         component::Component,
@@ -12,7 +14,7 @@ use bevy::{
 };
 
 use crate::{
-    CubeInput, DEFAULT_CUBES, GameState, MainMenuRoot,
+    CubeInput, DEFAULT_CUBES, GameState, InitialRender, MainMenuRoot,
     camera::Camera,
     cube::{CubeCleanup, CubeOpener, CubeSpawner},
     game::Game,
@@ -84,9 +86,11 @@ pub fn text_submission(
         commands.insert_resource(game);
         commands.insert_resource(cube_spawner);
         commands.insert_resource(cube_opener);
+        commands.insert_resource(InitialRender(HashSet::new()));
         camera.scroll_camera(cube_val * 3);
 
         for entity in &menu_input.menu_root {
+            commands.entity(entity).despawn_children();
             commands.entity(entity).despawn();
         }
 
